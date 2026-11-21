@@ -63,12 +63,16 @@ forge script script/Deploy.s.sol --rpc-url $MONAD_RPC_URL --private-key $PRIVATE
 `POOL_SEED` (wei) pre-funds the reward pool (needed for special challenges). Addresses are printed and stored in `broadcast/`;
 record them in `deployments/monad-testnet.json` (not yet deployed — requires a funded key).
 
-Verify (check the current Monad docs for the Sourcify/explorer endpoint):
+Verify (source publication is a deliberate step — nothing is verified automatically). Pre-checks done on 2026-11-21:
+Sourcify serves chain 10143 (Monad Testnet) and its **v2** API answers (`GET https://sourcify.dev/server/v2/contract/10143/<addr>`);
+the legacy v1 API was removed, so confirm your `forge` version speaks v2 (forge 1.8.4 was installed here; not yet exercised).
+The deployed bytecode of all four contracts was compared byte-for-byte with the local build: identical apart from immutable slots.
 ```
-forge verify-contract <ADDR> src/RunProofCore.sol:RunProofCore --chain 10143 \
-  --verifier sourcify --verifier-url https://sourcify-api-monad.blockscout.com/ \
+forge verify-contract <ADDR> src/RunProofCore.sol:RunProofCore --chain 10143 --verifier sourcify \
   --constructor-args $(cast abi-encode "constructor(address,address,address)" $OWNER $GAMES $CHEATS)
+# GameRegistry / CheatRegistry: constructor(address owner)   RecordNFT: constructor(address core)
 ```
+Explorer: https://testnet.monadexplorer.com (redirects to monadvision). The explorer may need its own API key for Etherscan-style verification.
 
 ## Interaction examples
 ```

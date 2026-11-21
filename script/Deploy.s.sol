@@ -26,11 +26,26 @@ contract Deploy is Script {
         if (demo) {
             // short windows so the full loop can be shown live; production keeps 30d / 3d+1d
             (
-                uint256 a, uint256 b, uint256 c, uint256 d, uint256 e, uint256 f, uint256 g, uint256 h,
-                uint32 i, , , , , uint16 n, uint16 o, uint16 q, uint16 r, uint16 s, uint16 t
+                uint256 a,
+                uint256 b,
+                uint256 c,
+                uint256 d,
+                uint256 e,
+                uint256 f,
+                uint256 g,
+                uint256 h,
+                uint32 i,,,,,
+                uint16 n,
+                uint16 o,
+                uint16 q,
+                uint16 r,
+                uint16 s,
+                uint16 t
             ) = core.params();
             core.setParams(
-                RunProofCore.Params(a, b, c, d, e, f, g, h, i, 10 minutes, 2 minutes, 2 minutes, 2 minutes, n, o, q, r, s, t)
+                RunProofCore.Params(
+                    a, b, c, d, e, f, g, h, i, 10 minutes, 2 minutes, 2 minutes, 2 minutes, n, o, q, r, s, t
+                )
             );
         }
         if (poolSeed > 0) core.fundPool{value: poolSeed}();

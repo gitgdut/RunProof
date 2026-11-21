@@ -56,8 +56,25 @@ contract RunProofTest is Test {
 
     function _p() internal view returns (RunProofCore.Params memory p) {
         (
-            uint256 a, uint256 b, uint256 c, uint256 d, uint256 e, uint256 f, uint256 g, uint256 h,
-            uint32 i, uint64 j, uint64 k, uint64 l, uint64 m, uint16 n, uint16 o, uint16 q, uint16 r, uint16 s, uint16 t
+            uint256 a,
+            uint256 b,
+            uint256 c,
+            uint256 d,
+            uint256 e,
+            uint256 f,
+            uint256 g,
+            uint256 h,
+            uint32 i,
+            uint64 j,
+            uint64 k,
+            uint64 l,
+            uint64 m,
+            uint16 n,
+            uint16 o,
+            uint16 q,
+            uint16 r,
+            uint16 s,
+            uint16 t
         ) = core.params();
         p = RunProofCore.Params(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, q, r, s, t);
     }
@@ -85,13 +102,21 @@ contract RunProofTest is Test {
 
     /// n confirm voters (0x1000+) and m deny voters (0x2000+) run a full round and finalize.
     function _round(uint256 cid, uint256 n, uint256 m) internal {
-        for (uint256 i; i < n; i++) _commit(cid, _voter(0x1000, i), RunProofCore.Choice.Confirm);
-        for (uint256 i; i < m; i++) _commit(cid, _voter(0x2000, i), RunProofCore.Choice.Deny);
+        for (uint256 i; i < n; i++) {
+            _commit(cid, _voter(0x1000, i), RunProofCore.Choice.Confirm);
+        }
+        for (uint256 i; i < m; i++) {
+            _commit(cid, _voter(0x2000, i), RunProofCore.Choice.Deny);
+        }
         uint8 round = core.getChallenge(cid).round;
         (uint64 commitEnd, uint64 revealEnd,,,,,,,,,,,,) = core.rounds(cid, round);
         vm.warp(commitEnd);
-        for (uint256 i; i < n; i++) _reveal(cid, _voter(0x1000, i), RunProofCore.Choice.Confirm);
-        for (uint256 i; i < m; i++) _reveal(cid, _voter(0x2000, i), RunProofCore.Choice.Deny);
+        for (uint256 i; i < n; i++) {
+            _reveal(cid, _voter(0x1000, i), RunProofCore.Choice.Confirm);
+        }
+        for (uint256 i; i < m; i++) {
+            _reveal(cid, _voter(0x2000, i), RunProofCore.Choice.Deny);
+        }
         vm.warp(revealEnd);
         core.finalizeVoting(cid);
     }
@@ -326,12 +351,20 @@ contract RunProofTest is Test {
         uint256 id = _submit(5000);
         uint256 cid = _challenge(id, C001);
         // 2 v 2 => 50:50 => extension
-        for (uint256 i; i < 2; i++) _commit(cid, _voter(0x1000, i), RunProofCore.Choice.Confirm);
-        for (uint256 i; i < 2; i++) _commit(cid, _voter(0x2000, i), RunProofCore.Choice.Deny);
+        for (uint256 i; i < 2; i++) {
+            _commit(cid, _voter(0x1000, i), RunProofCore.Choice.Confirm);
+        }
+        for (uint256 i; i < 2; i++) {
+            _commit(cid, _voter(0x2000, i), RunProofCore.Choice.Deny);
+        }
         (uint64 ce, uint64 re,,,,,,,,,,,,) = core.rounds(cid, 0);
         vm.warp(ce);
-        for (uint256 i; i < 2; i++) _reveal(cid, _voter(0x1000, i), RunProofCore.Choice.Confirm);
-        for (uint256 i; i < 2; i++) _reveal(cid, _voter(0x2000, i), RunProofCore.Choice.Deny);
+        for (uint256 i; i < 2; i++) {
+            _reveal(cid, _voter(0x1000, i), RunProofCore.Choice.Confirm);
+        }
+        for (uint256 i; i < 2; i++) {
+            _reveal(cid, _voter(0x2000, i), RunProofCore.Choice.Deny);
+        }
         vm.warp(re);
         vm.expectEmit(true, true, false, false);
         emit RunProofCore.VotingExtended(id, C001, cid, 0, 0);
@@ -484,7 +517,8 @@ contract RunProofTest is Test {
     }
 
     function _drainAndCheckSolvency(uint256) internal {
-        address[6] memory who = [challenger, player, _voter(0x1000, 0), _voter(0x1000, 1), _voter(0x1000, 2), _voter(0x2000, 0)];
+        address[6] memory who =
+            [challenger, player, _voter(0x1000, 0), _voter(0x1000, 1), _voter(0x1000, 2), _voter(0x2000, 0)];
         for (uint256 i; i < who.length; i++) {
             if (core.claimable(who[i]) > 0) {
                 vm.prank(who[i]);

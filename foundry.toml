@@ -11,3 +11,13 @@ remappings = ["@openzeppelin/=lib/openzeppelin-contracts/"]
 
 [rpc_endpoints]
 monad_testnet = "https://testnet-rpc.monad.xyz"
+
+[invariant]
+runs = 120
+depth = 80
+fail_on_revert = false
+
+[fmt]
+# src/ is deliberately excluded: the deployed testnet contracts were built from these exact bytes, and any
+# whitespace change alters the metadata hash and breaks source verification. Format src/ only with a redeploy.
+ignore = ["src/**"]
