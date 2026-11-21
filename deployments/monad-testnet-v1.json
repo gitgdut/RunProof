@@ -1,0 +1,13 @@
+{
+  "version": "v1-legacy-game-records",
+  "chainId": 10143,
+  "network": "Monad Testnet",
+  "deployer": "0xc338e05fD4F8322E1562DB052c42995223254B97",
+  "demoPeriods": "window=10min commit=2min reveal=2min extension=2min",
+  "contracts": {
+    "GameRegistry": "0x9906867e359F1C7d609f89f39beD4b15023601B0",
+    "CheatRegistry": "0xc0df0A2342557D42D35F34913EDB28E0792Ff400",
+    "RunProofCore": "0x606717FC7055B81C4290b34F9cA1E8123416b0Ab",
+    "RecordNFT": "0x2bFb2e522e51A458b6317343ea6Ef8A5E454c6EE"
+  }
+}

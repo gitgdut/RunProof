@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>RunProof — 通用链上成绩排行榜</title>
+<style>
+  :root{
+    --bg:#0a0a0c; --panel:#111114; --line:#232329; --txt:#e9e9ef; --dim:#8b8b96;
+    --green:#3ddc84; --red:#ff5c5c; --accent:#7c6cff; --amber:#ffc857;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#1a1636 0%,#0a0a0c 55%);
+    color:var(--txt);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1160px;margin:0 auto;padding:28px 22px 60px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+  h1{margin:0;font-size:26px;letter-spacing:-.4px}
+  h1 b{color:var(--accent)}
+  .tag{color:var(--dim);font-size:13px}
+  .net{font-size:12px;color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:5px 11px;background:#0e0e12}
+  .net i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:6px;box-shadow:0 0 8px var(--green)}
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:22px 0 0}
+  .tab{background:#121216;border:1px solid var(--line);color:var(--dim);padding:9px 15px;border-radius:10px;cursor:pointer;font-size:14px}
+  .tab:hover{border-color:#33333d;color:var(--txt)}
+  .tab.on{background:linear-gradient(180deg,#221d4d,#171433);border-color:#4b3fa8;color:#fff}
+  .sub{display:flex;gap:6px;margin:12px 0 18px;flex-wrap:wrap}
+  .chip{font-size:12.5px;color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:5px 12px;cursor:pointer}
+  .chip.on{border-color:#4b3fa8;color:#cfc8ff;background:#171433}
+  .grid{display:grid;grid-template-columns:1fr 300px;gap:18px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .card h2{margin:0;padding:14px 18px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line);font-weight:600}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:13px 18px;text-align:left;border-bottom:1px solid #1b1b21;font-size:14px}
+  th{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:#6d6d78;font-weight:600}
+  tr:last-child td{border-bottom:none}
+  tr.top td{background:linear-gradient(90deg,rgba(124,108,255,.10),transparent)}
+  .rank{font-variant-numeric:tabular-nums;color:var(--dim);width:56px}
+  tr.top .rank{color:var(--accent);font-weight:700}
+  .num{font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--dim)}
+  .badge{font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid;white-space:nowrap}
+  .b-ver{color:var(--green);border-color:#1f5c38;background:#0f1f16}
+  .b-rev{color:var(--red);border-color:#5c1f1f;background:#1f0f0f}
+  .b-pro{color:var(--amber);border-color:#5c4a1f;background:#1f1a0f}
+  .side{display:flex;flex-direction:column;gap:14px}
+  .kv{padding:12px 18px;border-bottom:1px solid #1b1b21;display:flex;justify-content:space-between;gap:12px;font-size:13.5px}
+  .kv:last-child{border-bottom:none}
+  .kv span:first-child{color:var(--dim)}
+  .kv span:last-child{font-family:ui-monospace,Menlo,monospace;font-size:13px}
+  .ok{color:var(--green)}
+  .warn{color:var(--red)}
+  .note{padding:14px 18px;color:#9a9aa6;font-size:12.5px;line-height:1.6;border-top:1px solid var(--line);background:#0d0d11}
+  .foot{margin-top:26px;color:#5c5c66;font-size:12px;display:flex;gap:18px;flex-wrap:wrap}
+  .foot a{color:#7c7c88;text-decoration:none;border-bottom:1px dotted #33333d}
+  .splat{padding:10px 18px;font-size:12.5px;color:var(--amber);background:#1a1509;border-bottom:1px solid #2a2210}
+  #toast{position:fixed;right:20px;bottom:20px;background:#171433;border:1px solid #4b3fa8;color:#cfc8ff;
+    padding:12px 16px;border-radius:10px;font-size:13px;opacity:0;transition:.3s;pointer-events:none}
+  #toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Run<span style="color:var(--accent)">Proof</span></h1>
+      <div class="tag">通用链上成绩排行榜 · 速通 / 手速 / 体能 / 任何可量化的成绩</div>
+    </div>
+    <div class="net"><i></i>Monad Testnet · 10143</div>
+  </header>
+
+  <div class="tabs" id="tabs"></div>
+  <div class="sub" id="divs"></div>
+  <div id="splat"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Verified Leaderboard · 正式榜单只包含已验证成绩</h2>
+      <table>
+        <thead><tr><th class="rank">#</th><th>玩家</th><th>成绩</th><th>状态</th><th>提交时间</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="5" style="padding:26px 18px;color:#6d6d78">读取链上数据中…</td></tr></tbody>
+      </table>
+      <div class="note" id="boardNote">完整榜单由链上事件构建；榜首与合约 bestRecordId 逐轮对账。</div>
+    </div>
+
+    <div class="side">
+      <div class="card">
+        <h2>链上权威榜首</h2>
+        <div class="kv"><span>bestRecordId</span><span id="bestId">—</span></div>
+        <div class="kv"><span>榜单第一名</span><span id="dbBest">—</span></div>
+        <div class="kv"><span>对账</span><span id="recon">—</span></div>
+        <div class="kv"><span>Verified 条数</span><span id="vCount">—</span></div>
+      </div>
+      <div class="card">
+        <h2>协议状态</h2>
+        <div class="kv"><span>奖励池</span><span id="pool">—</span></div>
+        <div class="kv"><span>挑战窗口</span><span id="win">—</span></div>
+        <div class="kv"><span>Commit / Reveal</span><span id="periods">—</span></div>
+        <div class="kv"><span>通过阈值</span><span id="thr">—</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span>RunProofCore <span class="mono" id="coreAddr"></span></span>
+    <a id="explorer" href="#" target="_blank" rel="noopener">在浏览器查看合约 ↗</a>
+    <span id="updated"></span>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script type="module">
+// Prefer the vendored bundle next to this file (GitHub Pages build); fall back to the CDN locally.
+let viem;
+try {
+  viem = await import('./viem.js');
+} catch {
+  viem = await import('https://esm.sh/viem@2.21.55');
+}
+const { createPublicClient, http, formatEther, parseAbi } = viem;
+
+const RPC = 'https://testnet-rpc.monad.xyz';
+const CORE = '0x1eb96bf618151adA2F7174CE9b8c41F45486084F';
+const CREG = '0x8D3aEdd92fA2151F61877D0e844a556E4eAB91A7';
+const START_BLOCK = 81509823n;
+
+const client = createPublicClient({ transport: http(RPC) });
+
+const categoryAbi = parseAbi([
+  'function categoryCount() view returns (uint256)',
+  'function getCategory(uint256) view returns ((string name,string descriptionURI,string unit,uint8 decimals,uint8 direction,uint32 ruleVersion,uint256 baseStake,bool active))',
+  'function divisionCount(uint256) view returns (uint256)',
+  'function divisionNames(uint256,uint256) view returns (string)',
+]);
+const coreAbi = parseAbi([
+  'function recordCount() view returns (uint256)',
+  'function bestRecordId(uint256,uint256) view returns (uint256)',
+  'function poolBalance() view returns (uint256)',
+  'function params() view returns ((uint256 submissionFee,uint256 challengeBond,uint256 specialBondMultiplier,uint256 specialReward,uint256 minVoteStake,uint256 maxVoteStake,uint256 quorumPower,uint256 leaderMultiplierBps,uint32 minVoters,uint64 challengeWindow,uint64 commitPeriod,uint64 revealPeriod,uint64 extensionPeriod,uint16 approvalBps,uint16 nearTieBps,uint16 wrongSlashBps,uint16 challengerRewardBps,uint16 voterRewardBps,uint16 playerCompBps))',
+  'function getRecord(uint256) view returns ((address player,uint256 categoryId,uint256 divisionId,uint256 value,uint8 direction,bytes32 evidenceHash,string evidenceURI,uint256 stake,uint64 submittedAt,uint64 deadline,uint32 ruleVersion,uint8 status,bool stakeSettled,uint32 activeChallenges))',
+  'event RecordSubmitted(uint256 indexed recordId,address indexed player,uint256 indexed categoryId,uint256 divisionId,uint256 value,uint256 stake,bytes32 evidenceHash,string evidenceURI,uint64 deadline)',
+]);
+
+const submittedEvent = coreAbi.find((x) => x.type === 'event' && x.name === 'RecordSubmitted');
+const DIRECTION = { 1: '越高越好', 2: '越低越好' };
+const STATUS = { 0:['无','b-pro'], 1:['待认证','b-pro'], 2:['已验证','b-ver'], 3:['已撤销','b-rev'] };
+const $ = (id) => document.getElementById(id);
+const short = (a) => a.slice(0,6) + '…' + a.slice(-4);
+
+function fmtValue(value, unit, decimals) {
+  if (unit === 'ms') {
+    const ms = value % 1000n, total = value / 1000n;
+    const m = total / 60n, s = total % 60n;
+    return `${m}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+  }
+  if (decimals === 0) return value.toString();
+  const d = BigInt(decimals), base = 10n ** d;
+  return (Number(value) / Number(base)).toFixed(decimals);
+}
+
+function fmtTime(ts) {
+  const d = new Date(Number(ts) * 1000);
+  return d.toLocaleString('zh-CN', { hour12:false, month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+
+let state = { categories: [], cat: null, div: 1, records: [] };
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('on');
+  setTimeout(() => t.classList.remove('on'), 2600);
+}
+
+async function loadCategories() {
+  const n = await client.readContract({ address: CREG, abi: categoryAbi, functionName: 'categoryCount' });
+  const cats = [];
+  for (let i = 1n; i <= n; i++) {
+    const c = await client.readContract({ address: CREG, abi: categoryAbi, functionName: 'getCategory', args: [i] });
+    const dc = await client.readContract({ address: CREG, abi: categoryAbi, functionName: 'divisionCount', args: [i] });
+    const divisions = [];
+    for (let d = 1n; d <= dc; d++) {
+      const name = await client.readContract({ address: CREG, abi: categoryAbi, functionName: 'divisionNames', args: [i, d] });
+      divisions.push({ id: Number(d), name });
+    }
+    cats.push({ id: Number(i), ...c, divisions });
+  }
+  state.categories = cats;
+  const preferred = cats.find(c => c.name.toLowerCase().includes('minecraft')) || cats[0];
+  state.cat = preferred; state.div = preferred.divisions[0]?.id ?? 1;
+  renderTabs();
+  await loadRecords();
+}
+
+function renderTabs() {
+  $('tabs').innerHTML = state.categories.map(c =>
+    `<div class="tab ${c.id===state.cat.id?'on':''}" data-cat="${c.id}">${c.name}</div>`).join('');
+  $('tabs').querySelectorAll('.tab').forEach(el => el.onclick = async () => {
+    state.cat = state.categories.find(c => c.id === Number(el.dataset.cat));
+    state.div = state.cat.divisions[0]?.id ?? 1;
+    renderTabs(); renderDivs(); await render();
+  });
+  renderDivs();
+}
+
+function renderDivs() {
+  const dv = state.cat.divisions;
+  $('divs').innerHTML = dv.map(d =>
+    `<div class="chip ${d.id===state.div?'on':''}" data-div="${d.id}">${d.name}</div>`).join('')
+    + `<div class="chip" style="cursor:default;border-style:dashed">${state.cat.unit} · ${DIRECTION[state.cat.direction]} · 精度 ${state.cat.decimals}</div>`;
+  $('divs').querySelectorAll('.chip[data-div]').forEach(el => el.onclick = async () => {
+    state.div = Number(el.dataset.div); renderDivs(); await render();
+  });
+}
+
+async function loadRecords() {
+  // Build the full board from events (that is the documented contract with the indexer).
+  let ids = [];
+  try {
+    const latest = await client.getBlockNumber();
+    for (let from = START_BLOCK; from <= latest; from += 2000n) {
+      const to = from + 1999n > latest ? latest : from + 1999n;
+      const logs = await client.getLogs({ address: CORE, event: submittedEvent, fromBlock: from, toBlock: to });
+      ids.push(...logs.map(l => Number(l.args.recordId)));
+    }
+  } catch (e) {
+    console.warn('getLogs failed, falling back to recordCount', e);
+    const n = await client.readContract({ address: CORE, abi: coreAbi, functionName: 'recordCount' });
+    for (let i = 1n; i <= n; i++) ids.push(Number(i));
+  }
+  ids = [...new Set(ids)];
+  const records = [];
+  for (const id of ids) {
+    try {
+      const r = await client.readContract({ address: CORE, abi: coreAbi, functionName: 'getRecord', args: [BigInt(id)] });
+      records.push({ id, ...r });
+    } catch {}
+  }
+  state.records = records;
+}
+
+function board() {
+  const cat = state.cat, div = state.div;
+  const rows = state.records
+    .filter(r => r.categoryId === BigInt(cat.id) && r.divisionId === BigInt(div) && r.status === 2)
+    .sort((a, b) => {
+      const dir = Number(cat.direction) === 2 ? 1 : -1;
+      if (a.value !== b.value) return a.value < b.value ? -1 * dir : 1 * dir;
+      if (a.submittedAt !== b.submittedAt) return Number(a.submittedAt - b.submittedAt);
+      return a.id - b.id;
+    });
+  return rows;
+}
+
+async function render() {
+  const cat = state.cat, div = state.div;
+  const rows = board();
+  const bestOnChain = await client.readContract({ address: CORE, abi: coreAbi, functionName: 'bestRecordId', args: [BigInt(cat.id), BigInt(div)] });
+  const bestId = rows.length ? BigInt(rows[0].id) : 0n;
+
+  $('rows').innerHTML = rows.length ? rows.map((r, i) => `
+    <tr class="${i===0?'top':''}">
+      <td class="rank">${i+1}</td>
+      <td><span class="mono">${short(r.player)}</span></td>
+      <td class="num">${fmtValue(r.value, cat.unit, cat.decimals)} <span class="mono">${cat.unit}</span></td>
+      <td><span class="badge ${STATUS[r.status][1]}">${STATUS[r.status][0]}</span></td>
+      <td class="mono">${fmtTime(r.submittedAt)}</td>
+    </tr>`).join('') : `<tr><td colspan="5" style="padding:26px 18px;color:#6d6d78">该榜单暂无已验证成绩</td></tr>`;
+
+  $('bestId').textContent = bestOnChain.toString();
+  $('dbBest').textContent = bestId.toString();
+  const ok = bestOnChain === bestId;
+  $('recon').innerHTML = ok
+    ? `<span class="ok">一致 ✓</span>`
+    : `<span class="warn">不一致 ✗</span>`;
+  $('vCount').textContent = rows.length;
+
+  const p = await client.readContract({ address: CORE, abi: coreAbi, functionName: 'params' });
+  const pool = await client.readContract({ address: CORE, abi: coreAbi, functionName: 'poolBalance' });
+  $('pool').textContent = formatEther(pool) + ' MON';
+  $('win').textContent = Number(p.challengeWindow) + ' 秒';
+  $('periods').textContent = `${p.commitPeriod}s / ${p.revealPeriod}s`;
+  $('thr').textContent = (Number(p.approvalBps)/100).toFixed(0) + '% · 最少 ' + p.minVoters + ' 票';
+  $('updated').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour12:false });
+
+  const key = `${cat.id}-${div}`;
+  state.lastBest = state.lastBest || {};
+  if (state.lastBest[key] !== undefined && state.lastBest[key] !== bestOnChain.toString()) {
+    toast(`榜首变更：recordId ${state.lastBest[key]} → ${bestOnChain}`);
+  }
+  state.lastBest[key] = bestOnChain.toString();
+}
+
+$('coreAddr').textContent = short(CORE);
+$('explorer').href = `https://testnet.monadscan.com/address/${CORE}`;
+
+await loadCategories();
+await render();
+setInterval(async () => { await loadRecords(); await render(); }, 20000);
+</script>
+</body>
+</html>
