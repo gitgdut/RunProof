@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { challengeWindowHours } from "../lib/config";
 
 export type IndexerLog = {
   eventName: string;
@@ -13,7 +14,6 @@ export type IndexerLog = {
 const text = (value: unknown) => String(value);
 const address = (value: unknown) => text(value).toLowerCase();
 const amount = (value: unknown) => BigInt(String(value)).toString();
-const chainHours = () => Number(process.env.CHALLENGE_WINDOW_HOURS ?? 48);
 
 async function ensureUser(tx: Prisma.TransactionClient, walletAddress: string) {
   await tx.user.upsert({ where: { walletAddress }, update: {}, create: { walletAddress } });
@@ -28,12 +28,14 @@ export async function applyEvent(tx: Prisma.TransactionClient, log: IndexerLog, 
       const gameId = text(args.gameId);
       const game = await tx.game.findUnique({ where: { id: gameId } });
       if (!game) throw new Error(`Cannot index RecordSubmitted: game ${gameId} is not registered`);
+      const score = Number(args.score);
+      if (!Number.isSafeInteger(score) || score < 0 || score > 2_147_483_647) throw new Error(`RecordSubmitted score ${String(args.score)} is outside the supported range`);
       await ensureUser(tx, playerAddress);
       const existing = await tx.record.findFirst({ where: { OR: [{ chainRecordId }, { transactionHash: log.transactionHash }] } });
       const data = {
-        chainRecordId, playerAddress, gameId, gameMode: text(args.gameMode), score: Number(args.score),
+        chainRecordId, playerAddress, gameId, gameMode: text(args.gameMode), score,
         stakeAmount: amount(args.stakeAmount), evidenceHash: text(args.evidenceHash), status: "CHALLENGE_PERIOD" as const,
-        submittedAt: blockTimestamp, challengeDeadline: new Date(blockTimestamp.getTime() + chainHours() * 3_600_000), transactionHash: log.transactionHash,
+        submittedAt: blockTimestamp, challengeDeadline: new Date(blockTimestamp.getTime() + challengeWindowHours() * 3_600_000), transactionHash: log.transactionHash,
       };
       if (existing) await tx.record.update({ where: { id: existing.id }, data });
       else await tx.record.create({ data: { ...data, videoUrl: "", replayUrl: null } });

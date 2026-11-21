@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { Prisma } from "@prisma/client";
 import { AppError, pageMeta } from "./api";
+import { challengeWindowHours } from "./config";
 import { prisma } from "./db";
 import { demoCheats, demoChallenges, demoGames, demoNfts, demoRecords, demoRewards, demoUsers, demoVotes } from "./demo-data";
 
@@ -68,17 +69,17 @@ export async function getRecord(id: string) {
 }
 
 export async function createRecord(input: { playerAddress: string; gameId: string; gameMode: string; score: number; stakeAmount: string; videoUrl: string; replayUrl?: string; evidenceHash: string; transactionHash: string }) {
-  const challengeDeadline = new Date(Date.now() + Number(process.env.CHALLENGE_WINDOW_HOURS ?? 48) * 3_600_000);
+  const challengeDeadline = new Date(Date.now() + challengeWindowHours() * 3_600_000);
   if (isMock()) {
     const db = mockDb();
     const game = db.games.find((item) => item.id === input.gameId);
     if (!game) notFound("Game");
     if (!game.supportedModes.includes(input.gameMode)) throw new AppError(400, "UNSUPPORTED_GAME_MODE", "Game mode is not supported");
     if (db.records.some((item) => item.transactionHash.toLowerCase() === input.transactionHash.toLowerCase() || (item.playerAddress === input.playerAddress && item.gameId === input.gameId && item.gameMode === input.gameMode && item.evidenceHash.toLowerCase() === input.evidenceHash.toLowerCase()))) {
-      throw new AppError(409, "DUPLICATE_RECORD", "Record transaction or evidence has already been submitted");
+      throw new AppError(409, "DUPLICATE_RESOURCE", "Record transaction or evidence has already been submitted");
     }
     if (!db.users.some((user) => user.walletAddress === input.playerAddress)) db.users.push({ id: `user_${randomUUID()}`, walletAddress: input.playerAddress, createdAt: new Date().toISOString() });
-    const record = { id: `rec_${randomUUID()}`, chainRecordId: null, ...input, replayUrl: input.replayUrl ?? null, status: "CHALLENGE_PERIOD", submittedAt: new Date().toISOString(), challengeDeadline: challengeDeadline.toISOString() };
+    const record = { id: `rec_${randomUUID()}`, chainRecordId: null, ...input, replayUrl: input.replayUrl ?? null, status: "PENDING", submittedAt: new Date().toISOString(), challengeDeadline: challengeDeadline.toISOString() };
     db.records.push(record);
     return getRecord(record.id);
   }
@@ -87,7 +88,7 @@ export async function createRecord(input: { playerAddress: string; gameId: strin
     if (!game) notFound("Game");
     if (!Array.isArray(game.supportedModes) || !game.supportedModes.includes(input.gameMode)) throw new AppError(400, "UNSUPPORTED_GAME_MODE", "Game mode is not supported");
     await tx.user.upsert({ where: { walletAddress: input.playerAddress }, update: {}, create: { walletAddress: input.playerAddress } });
-    const record = await tx.record.create({ data: { ...input, status: "CHALLENGE_PERIOD", challengeDeadline } });
+    const record = await tx.record.create({ data: { ...input, status: "PENDING", challengeDeadline } });
     return tx.record.findUniqueOrThrow({ where: { id: record.id }, include: { game: true, player: true, challenges: true, nfts: true } });
   });
 }
@@ -134,9 +135,11 @@ export async function createChallenge(input: { recordId: string; cheatId: string
     if (!record) notFound("Record");
     const cheat = db.cheats.find((item) => item.id === input.cheatId);
     if (!cheat) notFound("Cheat");
+    if (!record.chainRecordId) throw new AppError(409, "CHAIN_RECORD_REQUIRED", "Record must be confirmed by RecordSubmitted before it can be challenged");
     if (cheat.gameId !== record.gameId || cheat.status !== "ACTIVE") throw new AppError(400, "INVALID_CHEAT", "Cheat must be active and belong to the record's game");
     if (record.status !== "CHALLENGE_PERIOD" || Date.parse(record.challengeDeadline) <= Date.now()) throw new AppError(409, "CHALLENGE_CLOSED", "Record is not open for challenges");
-    if (db.challenges.some((item) => item.transactionHash.toLowerCase() === input.transactionHash.toLowerCase() || (item.recordId === input.recordId && item.challenger === input.challenger && item.evidenceHash.toLowerCase() === input.evidenceHash.toLowerCase()))) throw new AppError(409, "DUPLICATE_CHALLENGE", "Challenge has already been submitted");
+    if (db.challenges.some((item) => item.transactionHash.toLowerCase() === input.transactionHash.toLowerCase() || (item.recordId === input.recordId && item.challenger === input.challenger && item.evidenceHash.toLowerCase() === input.evidenceHash.toLowerCase()))) throw new AppError(409, "DUPLICATE_RESOURCE", "Challenge has already been submitted");
+    if (!db.users.some((user) => user.walletAddress === input.challenger)) db.users.push({ id: `user_${randomUUID()}`, walletAddress: input.challenger, createdAt: new Date().toISOString() });
     const challenge = { id: `challenge_${randomUUID()}`, chainChallengeId: null, ...input, status: "PENDING", createdAt: new Date().toISOString() };
     db.challenges.push(challenge);
     return getChallenge(challenge.id);
@@ -146,8 +149,10 @@ export async function createChallenge(input: { recordId: string; cheatId: string
     if (!record) notFound("Record");
     const cheat = await tx.cheat.findUnique({ where: { id: input.cheatId } });
     if (!cheat) notFound("Cheat");
+    if (!record.chainRecordId) throw new AppError(409, "CHAIN_RECORD_REQUIRED", "Record must be confirmed by RecordSubmitted before it can be challenged");
     if (cheat.gameId !== record.gameId || cheat.status !== "ACTIVE") throw new AppError(400, "INVALID_CHEAT", "Cheat must be active and belong to the record's game");
     if (record.status !== "CHALLENGE_PERIOD" || record.challengeDeadline <= new Date()) throw new AppError(409, "CHALLENGE_CLOSED", "Record is not open for challenges");
+    await tx.user.upsert({ where: { walletAddress: input.challenger }, update: {}, create: { walletAddress: input.challenger } });
     const challenge = await tx.challenge.create({ data: { ...input, status: "PENDING" } });
     return tx.challenge.findUniqueOrThrow({ where: { id: challenge.id }, include: { record: true, cheat: true, votes: true } });
   });
@@ -211,7 +216,7 @@ export async function createCheat(input: { cheatCode: string; name: string; desc
   if (isMock()) {
     const db = mockDb();
     if (!db.games.some((game) => game.id === input.gameId)) notFound("Game");
-    if (db.cheats.some((cheat) => cheat.gameId === input.gameId && cheat.cheatCode === input.cheatCode)) throw new AppError(409, "DUPLICATE_CHEAT", "Cheat code already exists for this game");
+    if (db.cheats.some((cheat) => cheat.gameId === input.gameId && cheat.cheatCode === input.cheatCode)) throw new AppError(409, "DUPLICATE_RESOURCE", "Cheat code already exists for this game");
     const cheat = { id: `cheat_${randomUUID()}`, chainCheatId: null, ...input, status: "ACTIVE", createdAt: new Date().toISOString() };
     db.cheats.push(cheat);
     return cheat;

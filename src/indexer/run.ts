@@ -1,6 +1,6 @@
 import { prisma } from "../lib/db";
 import { indexerConfig } from "./config";
-import { syncOnce } from "./sync";
+import { ChainReorgError, syncOnce } from "./sync";
 
 async function main() {
   const config = indexerConfig();
@@ -12,6 +12,10 @@ async function main() {
       console.log(JSON.stringify({ level: "info", ...result }));
       if (process.env.INDEXER_ONCE === "true") return;
     } catch (error) {
+      if (error instanceof ChainReorgError) {
+        console.error(JSON.stringify({ level: "fatal", message: error.message, action: "manual_reconciliation_required" }));
+        throw error;
+      }
       attempt += 1;
       const delay = Math.min(60_000, 1000 * 2 ** Math.min(attempt, 6));
       console.error(JSON.stringify({ level: "error", message: error instanceof Error ? error.message : String(error), retryInMs: delay }));

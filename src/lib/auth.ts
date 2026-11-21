@@ -1,5 +1,6 @@
 import { verifyMessage } from "viem";
 import { AppError } from "./api";
+import { readIntegerEnv } from "./config";
 import type { CreateChallengeInput, CreateCheatInput, CreateRecordInput } from "./validation";
 
 function chainId() {
@@ -10,7 +11,7 @@ function chainId() {
 
 function verifyExpiry(expiresAt: string) {
   const expires = Date.parse(expiresAt);
-  const maxAge = Number(process.env.AUTH_MAX_SIGNATURE_AGE_SECONDS ?? 300) * 1000;
+  const maxAge = readIntegerEnv("AUTH_MAX_SIGNATURE_AGE_SECONDS", 300, 30, 3600) * 1000;
   const now = Date.now();
   if (expires <= now) throw new AppError(401, "SIGNATURE_EXPIRED", "The signed request has expired");
   if (expires - now > maxAge) throw new AppError(400, "SIGNATURE_WINDOW_TOO_LONG", `expiresAt must be within ${maxAge / 1000} seconds`);

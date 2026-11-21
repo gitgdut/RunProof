@@ -8,6 +8,7 @@ import { GET as getVoting } from "../app/api/voting/route";
 import { GET as getUserRewards } from "../app/api/users/[address]/rewards/route";
 import { POST as postCheat } from "../app/api/cheats/route";
 import { POST as postChallenge } from "../app/api/challenges/route";
+import { GET as getHealth } from "../app/api/health/route";
 
 // Public test-only key; never use this account on a real network.
 const account = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
@@ -22,6 +23,22 @@ beforeEach(() => {
 });
 
 describe("RunProof API", () => {
+  it("reports the active data source in health", async () => {
+    const response = await getHealth();
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.data).toMatchObject({ status: "ok", dataMode: "mock", database: "not-used" });
+  });
+
+  it("rejects non-http media URLs before signature verification", async () => {
+    const response = await postRecord(jsonRequest("/api/records", {
+      playerAddress: account.address, gameId: "game_tetris", gameMode: "marathon", score: 1, stakeAmount: "1",
+      videoUrl: "javascript:alert(1)", evidenceHash: hex("1"), transactionHash: hex("2"),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), signature: `0x${"1".repeat(130)}`,
+    }));
+    expect(response.status).toBe(400);
+  });
+
   it("lists records with filters and unified pagination", async () => {
     const response = await getRecords(jsonRequest("/api/records?status=VERIFIED&page=1&limit=1"));
     const body = await response.json();
@@ -62,9 +79,20 @@ describe("RunProof API", () => {
     };
     const input = { ...unsigned, signature: await account.signMessage({ message: recordMessage(unsigned) }) };
     const created = await postRecord(jsonRequest("/api/records", input));
+    const createdBody = await created.json();
     expect(created.status).toBe(201);
+    expect(createdBody.data.status).toBe("PENDING");
     const duplicate = await postRecord(jsonRequest("/api/records", input));
     expect(duplicate.status).toBe(409);
+
+    const challenge = {
+      recordId: createdBody.data.id, cheatId: "cheat_video_edit", challenger: account.address.toLowerCase(),
+      evidenceHash: hex("3"), transactionHash: hex("4"), expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const challengeInput = { ...challenge, signature: await account.signMessage({ message: challengeMessage(challenge) }) };
+    const blocked = await postChallenge(jsonRequest("/api/challenges", challengeInput));
+    expect(blocked.status).toBe(409);
+    expect((await blocked.json()).error.code).toBe("CHAIN_RECORD_REQUIRED");
   });
 
   it("rejects a record forged for another wallet", async () => {

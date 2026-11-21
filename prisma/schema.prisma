@@ -143,13 +143,14 @@ model Vote {
   voterAddress    String
   votingChoice    VotingChoice?
   stakeAmount     Decimal      @db.Decimal(78, 0)
-  commitHash      String       @unique
+  commitHash      String
   transactionHash String
   status          VoteStatus   @default(COMMITTED)
   createdAt       DateTime     @default(now())
   challenge       Challenge    @relation(fields: [challengeId], references: [id], onDelete: Cascade)
 
   @@unique([challengeId, voterAddress])
+  @@index([commitHash])
   @@index([voterAddress, createdAt])
   @@map("votes")
 }
@@ -165,8 +166,8 @@ model Reward {
   createdAt       DateTime   @default(now())
   record          Record?    @relation(fields: [relatedRecordId], references: [id], onDelete: SetNull)
 
-  @@unique([transactionHash, walletAddress, rewardType])
   @@index([walletAddress, createdAt])
+  @@index([transactionHash])
   @@map("rewards")
 }
 
@@ -206,6 +207,7 @@ model SyncState {
   chainId         Int
   contractAddress String
   lastBlock       BigInt   @default(0)
+  lastBlockHash   String?
   updatedAt       DateTime @updatedAt
 
   @@unique([chainId, contractAddress])

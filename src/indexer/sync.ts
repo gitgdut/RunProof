@@ -4,6 +4,13 @@ import { runProofAbi } from "./abi";
 import { indexerConfig } from "./config";
 import { applyEvent, eventPayload, type IndexerLog } from "./handlers";
 
+export class ChainReorgError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChainReorgError";
+  }
+}
+
 export function monadClient(config: ReturnType<typeof indexerConfig>) {
   return createPublicClient({ transport: http(config.rpcUrl, { timeout: 20_000, retryCount: 2 }) });
 }
@@ -15,6 +22,12 @@ export async function syncOnce() {
   const targetBlock = currentBlock > config.confirmations ? currentBlock - config.confirmations : 0n;
   const stateId = "runproof-primary";
   let state = await prisma.syncState.findUnique({ where: { id: stateId } });
+  if (state?.lastBlockHash) {
+    const cursorBlock = await client.getBlock({ blockNumber: state.lastBlock });
+    if (!cursorBlock.hash || cursorBlock.hash !== state.lastBlockHash) {
+      throw new ChainReorgError(`Indexed cursor block ${state.lastBlock} is no longer canonical; reset or reconcile the index before retrying`);
+    }
+  }
   let fromBlock = state ? state.lastBlock + 1n : config.startBlock;
   let processed = 0;
 
@@ -33,7 +46,7 @@ export async function syncOnce() {
       await prisma.$transaction(async (tx) => {
         const existing = await tx.chainEventLog.findUnique({ where: { chainId_transactionHash_logIndex: { chainId: config.chainId, transactionHash: log.transactionHash, logIndex: log.logIndex } } });
         if (existing) {
-          if (existing.blockHash !== log.blockHash || existing.eventName !== log.eventName) throw new Error(`Chain reorganization detected at ${log.transactionHash}:${log.logIndex}; manual reconciliation required`);
+          if (existing.blockHash !== log.blockHash || existing.eventName !== log.eventName) throw new ChainReorgError(`Chain reorganization detected at ${log.transactionHash}:${log.logIndex}; manual reconciliation required`);
           return;
         }
         await applyEvent(tx, log, timestamps.get(blockKey)!);
@@ -42,12 +55,14 @@ export async function syncOnce() {
       processed += 1;
     }
 
+    const cursorBlock = await client.getBlock({ blockNumber: toBlock });
+    if (!cursorBlock.hash) throw new ChainReorgError(`Block ${toBlock} has no canonical hash`);
     await prisma.syncState.upsert({
       where: { id: stateId },
-      update: { lastBlock: toBlock, chainId: config.chainId, contractAddress: config.address.toLowerCase() },
-      create: { id: stateId, chainId: config.chainId, contractAddress: config.address.toLowerCase(), lastBlock: toBlock },
+      update: { lastBlock: toBlock, lastBlockHash: cursorBlock.hash, chainId: config.chainId, contractAddress: config.address.toLowerCase() },
+      create: { id: stateId, chainId: config.chainId, contractAddress: config.address.toLowerCase(), lastBlock: toBlock, lastBlockHash: cursorBlock.hash },
     });
-    state = { id: stateId, chainId: config.chainId, contractAddress: config.address.toLowerCase(), lastBlock: toBlock, updatedAt: new Date() };
+    state = { id: stateId, chainId: config.chainId, contractAddress: config.address.toLowerCase(), lastBlock: toBlock, lastBlockHash: cursorBlock.hash, updatedAt: new Date() };
     fromBlock = state.lastBlock + 1n;
   }
   return { processed, syncedThrough: (state?.lastBlock ?? config.startBlock).toString(), chainHead: currentBlock.toString() };

@@ -5,17 +5,19 @@ export const addressSchema = z.string().refine(isAddress, "Invalid EVM address")
 export const hashSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "Expected a 32-byte hex hash").transform((value) => value.toLowerCase());
 export const signatureSchema = z.string().regex(/^0x[0-9a-fA-F]{130}$/, "Expected a 65-byte EIP-191 signature");
 const amountSchema = z.string().regex(/^[0-9]+$/).refine((value) => BigInt(value) > 0n, "Amount must be greater than zero");
+const mediaUrlSchema = z.string().max(2048).url().refine((value) => /^https?:\/\//i.test(value), "Only http/https URLs are allowed");
+const gameIdentifierSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, "Only letters, numbers, underscores and hyphens are allowed");
 const page = z.coerce.number().int().min(1).default(1);
 const limit = z.coerce.number().int().min(1).max(100).default(20);
 export const paginationSchema = z.object({ page, limit });
 
 export const listRecordsSchema = z.object({
-  gameId: z.string().min(1).optional(), gameMode: z.string().min(1).optional(),
+  gameId: gameIdentifierSchema.optional(), gameMode: gameIdentifierSchema.optional(),
   status: z.enum(["PENDING", "CHALLENGE_PERIOD", "VERIFIED", "REVOKED"]).optional(),
   playerAddress: addressSchema.optional(), page, limit,
 });
 export const leaderboardSchema = z.object({
-  gameId: z.string().min(1).default("game_tetris"), gameMode: z.string().min(1).default("marathon"),
+  gameId: gameIdentifierSchema.default("game_tetris"), gameMode: gameIdentifierSchema.default("marathon"),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 export const listChallengesSchema = z.object({
@@ -26,7 +28,7 @@ export const listVotingSchema = z.object({
   status: z.enum(["PENDING", "VOTING", "UPHELD", "REJECTED", "CANCELLED"]).optional(), page, limit,
 });
 export const listCheatsSchema = z.object({
-  gameId: z.string().min(1).optional(), status: z.enum(["ACTIVE", "DEPRECATED"]).optional(), page, limit,
+  gameId: gameIdentifierSchema.optional(), status: z.enum(["ACTIVE", "DEPRECATED"]).optional(), page, limit,
 });
 export const listNftsSchema = z.object({
   ownerAddress: addressSchema.optional(), recordId: z.string().min(1).optional(),
@@ -44,12 +46,12 @@ const signedFields = {
 
 export const createRecordSchema = z.object({
   playerAddress: addressSchema,
-  gameId: z.string().min(1).max(64),
-  gameMode: z.string().min(1).max(64),
+  gameId: gameIdentifierSchema,
+  gameMode: gameIdentifierSchema,
   score: z.number().int().nonnegative().max(2_147_483_647),
   stakeAmount: amountSchema,
-  videoUrl: z.string().url().max(2048),
-  replayUrl: z.string().url().max(2048).optional(),
+  videoUrl: mediaUrlSchema,
+  replayUrl: mediaUrlSchema.optional(),
   ...signedFields,
 }).strict();
 
@@ -64,7 +66,7 @@ export const createCheatSchema = z.object({
   cheatCode: z.string().regex(/^[A-Z0-9_]{2,64}$/),
   name: z.string().min(2).max(120),
   description: z.string().min(2).max(2000),
-  gameId: z.string().min(1).max(64),
+  gameId: gameIdentifierSchema,
   adminAddress: addressSchema,
   expiresAt: z.string().datetime(),
   signature: signatureSchema,

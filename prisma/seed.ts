@@ -8,7 +8,8 @@ const dates = (value: Record<string, unknown>): any => Object.fromEntries(
 
 async function main() {
   for (const user of demoUsers) {
-    await prisma.user.upsert({ where: { id: user.id }, update: dates(user), create: dates(user) });
+    const { id: _id, ...profile } = user;
+    await prisma.user.upsert({ where: { walletAddress: user.walletAddress }, update: dates(profile), create: dates(user) });
   }
   for (const game of demoGames) {
     await prisma.game.upsert({ where: { id: game.id }, update: game, create: game });

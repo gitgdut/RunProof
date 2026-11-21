@@ -72,14 +72,14 @@ INDEXER_ONCE=true pnpm indexer
 pnpm indexer:verify
 ```
 
-索引器提供交易 Hash + Log Index 去重、事件日志存档、同步游标、确认块窗口、指数退避重试、重组冲突检测和链上/数据库日志校验。若事件参数或 ID 映射调整，需要同步修改 `src/indexer/handlers.ts`。最终业务结果仍应通过合约 view 方法复核；拿到只读 ABI 后可扩展 `indexer:verify`。
+索引器提供交易 Hash + Log Index 去重、事件日志存档、同步游标、确认块窗口、指数退避重试、重组冲突检测和链上/数据库日志校验。游标同时保存区块 Hash；若重启后发现游标区块已不在主链，索引器会停止并标记 `manual_reconciliation_required`，不会继续在错误游标上追加数据。若事件参数或 ID 映射调整，需要同步修改 `src/indexer/handlers.ts`。最终业务结果仍应通过合约 view 方法复核；拿到只读 ABI 后可扩展 `indexer:verify`。
 
 ## API 与安全
 
 完整接口、响应格式、签名消息和请求示例见 [docs/API.md](docs/API.md)。
 
-- 所有输入经过 Zod；金额使用 wei 字符串，避免精度丢失。
-- Records/Challenges 创建需要对应钱包的 EIP-191 签名，并拒绝重复交易/证据。
+- 所有输入经过 Zod；金额使用 wei 字符串，媒体地址只允许 HTTP/HTTPS。
+- Records/Challenges 创建需要对应钱包的 EIP-191 签名，并拒绝重复交易/证据。API 创建的记录先进入 `PENDING`，只有索引到 `RecordSubmitted` 后才能被挑战。
 - Cheat Registry 写入额外要求管理员钱包白名单。
 - API 不提供修改投票结果、发放奖励、罚没或铸造 NFT 的写入口。
 - 私钥不进入服务端或数据库；环境变量文件已加入 `.gitignore`。

@@ -110,7 +110,7 @@ Transaction: <lowercase hash>
 Expires: <expiresAt>
 ```
 
-创建后状态固定为 `CHALLENGE_PERIOD`，客户端不能指定 `VERIFIED`。相同交易 Hash，或同一玩家/游戏/模式下的相同证据 Hash，会返回 `409 DUPLICATE_RESOURCE` 或 `DUPLICATE_RECORD`。
+创建后状态固定为 `PENDING`，表示 API 已校验签名但尚未看到链上事件。索引器确认 `RecordSubmitted` 后才转为 `CHALLENGE_PERIOD`；客户端不能指定 `VERIFIED`。相同交易 Hash，或同一玩家/游戏/模式下的相同证据 Hash，会返回 `409`。
 
 ### POST /api/challenges
 
@@ -127,7 +127,7 @@ Transaction: <lowercase hash>
 Expires: <expiresAt>
 ```
 
-记录必须处于挑战期，Cheat 必须属于同一游戏且为 `ACTIVE`。创建状态固定为 `PENDING`，不能提交投票结果。
+记录必须已有链上 `chainRecordId`、处于挑战期，Cheat 必须属于同一游戏且为 `ACTIVE`。仅凭 API 签名但尚未被 `RecordSubmitted` 确认的记录不能创建挑战。挑战创建状态固定为 `PENDING`，不能提交投票结果。
 
 ### POST /api/cheats
 
