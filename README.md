@@ -1,12 +1,14 @@
-# RunProof 后端
+# RunProof Backend
 
-按 **V2 合约模型**（Category / Division / ChallengeReason）把链上事件索引成数据库，并对外提供只读 REST API。排名以链上为准（`bestRecordId`），数据库负责完整榜单与历史；两者每轮同步对账。
+**English** · [简体中文](README.zh-CN.md)
 
-- 网络：Monad Testnet（Chain ID `10143`）
-- 起始区块：`81509823`
-- 后端**不签名、不代发交易**，`POST /api/records` 只返回未签名的 `submitRecord` 调用参数
+Indexes the RunProof V2 contracts (Category / Division / ChallengeReason) into PostgreSQL and serves a read-only REST API. The chain stays authoritative for ranking (`bestRecordId`); the database owns the full leaderboard and history, and both are reconciled on every sync.
 
-## 快速演示（无需数据库）
+- Network: Monad Testnet (Chain ID `10143`)
+- Start block: `81509823`
+- The backend **never signs or sends transactions**; `POST /api/records` only returns unsigned `submitRecord` calldata
+
+## Quick start (no database needed)
 
 ```bash
 pnpm install
@@ -14,7 +16,7 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-默认 `DATA_MODE=mock`，内置与链上演示一致的 5 个分类、9 条成绩、1 个已确认挑战：
+`DATA_MODE=mock` is the default and ships the same five categories, nine records and one confirmed challenge as the deployed demo:
 
 ```bash
 curl http://localhost:3000/api/health
@@ -24,99 +26,97 @@ curl "http://localhost:3000/api/records?categoryId=4&divisionId=1&status=Verifie
 curl http://localhost:3000/api/reasons
 ```
 
-## PostgreSQL 模式
+## PostgreSQL mode
 
 ```bash
 docker compose up -d
-cp .env.example .env.local   # 把 DATA_MODE 改成 prisma
+cp .env.example .env.local   # set DATA_MODE=prisma
 pnpm db:deploy
 pnpm db:seed
 pnpm dev
 ```
 
-> `prisma/migrations/202611211500_v2_categories` 会用 V2 表结构替换 V1（`games`/`cheats`），开头是 `DROP TABLE ... CASCADE`，只适用于还没有生产数据的阶段。
+> `prisma/migrations/202611211500_v2_categories` replaces the V1 tables (`games` / `cheats`) and starts with `DROP TABLE ... CASCADE`. It is only safe before there is production data.
 
-## 合约
+## Contracts
 
-| 合约 | 环境变量 | 地址 |
+| Contract | Env var | Address |
 | --- | --- | --- |
 | RunProofCore | `RUNPROOF_CORE_ADDRESS` | `0x1eb96bf618151adA2F7174CE9b8c41F45486084F` |
 | CategoryRegistry | `CATEGORY_REGISTRY_ADDRESS` | `0x8D3aEdd92fA2151F61877D0e844a556E4eAB91A7` |
 | ChallengeReasonRegistry | `CHALLENGE_REASON_REGISTRY_ADDRESS` | `0x522d2883FA6ac437F414874B9B7cEEAfAE4caC0b` |
 | RecordNFT | `RECORD_NFT_ADDRESS` | `0x967D0B53cb05BC9D6c85BEB087444e6f5a3e1360` |
 
-枚举按链上数值存储，不做本地翻译：`RecordStatus` 0 None / 1 Provisional / 2 Verified / 3 Revoked；`ChallengeStatus` 0–5；`Choice` 0 None / 1 Confirm / 2 Deny；`direction` 1 HigherIsBetter / 2 LowerIsBetter；`StakeKind`/`SlashKind` 0–2；`RewardKind` 0–2。API 同时返回数值（`statusCode`）与名称（`status`）。
+Chain enums are stored as their numeric values, never translated locally: `RecordStatus` 0 None / 1 Provisional / 2 Verified / 3 Revoked; `ChallengeStatus` 0–5; `Choice` 0 None / 1 Confirm / 2 Deny; `direction` 1 HigherIsBetter / 2 LowerIsBetter; `StakeKind` / `SlashKind` 0–2; `RewardKind` 0–2. The API returns both the number (`statusCode`) and the name (`status`).
 
-### ABI 与合约的职责边界
+### ABI ownership
 
-合约不归后端维护。`abi/*.json` 的**准绳是合约团队的产物**，本仓库里的副本只用于"对齐"：读事件、读 view、拼未签名交易。后端不改合约、不发布合约、也不代签交易。
+Contracts are not maintained in this repository. The authoritative `abi/*.json` are the contract team's artifacts; the copies here exist only so the backend can stay aligned (read events, read views, build unsigned transactions).
 
-当前 `origin/contracts/core` 发布的仍是 V1（`CheatRegistry/GameRegistry`），没有 V2 的 ABI 文件，所以这份副本是依据 `BACKEND-HANDOFF.md` 的签名重建、并逐项对真实链校验过的：
-
-```bash
-pnpm abi:gen     # 从 scripts/gen-abi.ts 的声明生成 abi/*.json
-pnpm abi:check   # 用生成的 JSON 真调链：getRecord / getCategory / getReason / rounds / votes / params / bestRecordId / requiredPayment / claimable
-```
-
-2026-11-21 实测：`getRecord(1)` = category 4 / division 1 / value 1152345 / direction 2 / Verified；`getCategory(1)` = 100m Sprint / ms / LowerIsBetter；`getReason(1)` = R001 Fabricated Evidence；`params()` 中 `minVoters=3`、`quorumPower=300`、`approvalBps=7500`、`wrongSlashBps=3000`。从部署块起 300 个区块解出 91 条日志、19 类事件。
-
-契约细节里最容易写错的两点已在 `src/indexer/reads.ts` 处理：`getRecord`/`getCategory`/`getReason` 返回**单个 tuple（带外层 offset）**，`rounds`/`votes`/`params` 返回**扁平多值且无命名**（只按下标取）。
-
-**合约团队发布正式 ABI 或重新部署时，后端只需三步**（不改任何业务代码）：
-
-1. 用官方 `abi/*.json` 覆盖本仓库同名文件；
-2. 更新 `.env` 的四个地址与 `INDEXER_START_BLOCK`；
-3. `pnpm abi:check` 核对只读方法，再 `INDEXER_ONCE=true pnpm indexer` 回放，最后看 `/api/health` 的 `lastReconcile.ok`。
-
-只有事件的**语义**变了（字段增减、枚举重排）才需要改 `src/indexer/handlers.ts`；纯签名补充不用。
-
-## 索引器
-
-## 索引器
+`origin/contracts/core` still publishes V1 (`CheatRegistry` / `GameRegistry`) without V2 ABIs, so these copies were rebuilt from the handover signatures and verified against the live chain:
 
 ```bash
-pnpm indexer                     # 持续同步
-INDEXER_ONCE=true pnpm indexer    # 单次同步，适合定时任务
-pnpm indexer:verify               # 校验最近 1000 块的链上日志与归档表
-pnpm indexer:probe                # 不连数据库，只看 RPC 与事件解码
+pnpm abi:gen     # generate abi/*.json from the declarations in scripts/gen-abi.ts
+pnpm abi:check   # call the live chain with the generated JSON: getRecord / getCategory / getReason / rounds / votes / params / bestRecordId / requiredPayment / claimable
 ```
 
-同步 4 个合约、30 类事件：`CategoryCreated/Updated/ActiveSet`、`DivisionCreated/ActiveSet`、`ReasonRegistered/Proposed/ProposalVoted/ProposalFinalized/DiscovererRewarded`、`RecordSubmitted/Verified/Revoked`、`LeaderboardUpdated`、`ChallengeCreated`、`EvidenceSubmitted`、`VoteCommitted/Revealed`、`VotingExtended`、`EvidenceVotingStarted`、`VotingFinalized`、`StakeReturned/Slashed`、`RewardDistributed`、`Withdrawn`、`PoolFunded/Withdrawn`、`ParamsUpdated`、`NFTMinted`、`Transfer`。
+Verified on 2026-11-21: `getRecord(1)` = category 4 / division 1 / value 1152345 / direction 2 / Verified; `getCategory(1)` = 100m Sprint / ms / LowerIsBetter; `getReason(1)` = R001 Fabricated Evidence; `params()` gives `minVoters=3`, `quorumPower=300`, `approvalBps=7500`, `wrongSlashBps=3000`. 91 logs across 19 event types decoded from 300 blocks after the deployment block.
 
-关键保证：
+Two easy-to-miss encoding details are handled in `src/indexer/reads.ts`: `getRecord` / `getCategory` / `getReason` return a **single tuple with an outer offset**, while `rounds` / `votes` / `params` return **flat unnamed values** (index access only).
 
-- **幂等**：`(chainId, txHash, logIndex)` 唯一；原始日志先落 `chain_event_logs`，事件处理与派生表写入在同一个事务里。
-- **重组**：游标保存区块 Hash，启动时若已不在主链则抛 `ChainReorgError` 停止，等待人工对账。
-- **对账**：每批事件后按链上 view 重写 Record / Challenge / Round / Vote；再对每个涉及的 `(categoryId, divisionId)` 读 `bestRecordId()` 与库内指针比对，不一致时以链上为准修正并写入 `reconcile_runs`。
-- **分页**：公共 RPC 的 `eth_getLogs` 跨度上限约 100 块，默认窗口 100，被拒时自动折半（下限 10）。
-- **轮次**：挑战升级到证据充分性投票时 round 0 静默结算（不发 `VotingFinalized`），因此对账覆盖 `0..当前轮`。
+**When the contract team publishes official ABIs or redeploys, the backend needs three steps** (no business-code change):
 
-## 榜单规则
+1. overwrite `abi/*.json` with the official files;
+2. update the four addresses and `INDEXER_START_BLOCK` in `.env`;
+3. run `pnpm abi:check`, then replay with `INDEXER_ONCE=true pnpm indexer`, then confirm `lastReconcile.ok` in `/api/health`.
+
+Only a semantic change to an event (fields added/removed, enums reordered) requires touching `src/indexer/handlers.ts`.
+
+## Indexer
+
+```bash
+pnpm indexer                     # continuous sync
+INDEXER_ONCE=true pnpm indexer    # single pass, cron friendly
+pnpm indexer:verify               # check the last 1000 blocks against the archive table
+pnpm indexer:probe                # no database: just RPC + event decoding
+```
+
+Syncs four contracts and 30 event types: `CategoryCreated/Updated/ActiveSet`, `DivisionCreated/ActiveSet`, `ReasonRegistered/Proposed/ProposalVoted/ProposalFinalized/DiscovererRewarded`, `RecordSubmitted/Verified/Revoked`, `LeaderboardUpdated`, `ChallengeCreated`, `EvidenceSubmitted`, `VoteCommitted/Revealed`, `VotingExtended`, `EvidenceVotingStarted`, `VotingFinalized`, `StakeReturned/Slashed`, `RewardDistributed`, `Withdrawn`, `PoolFunded/Withdrawn`, `ParamsUpdated`, `NFTMinted`, `Transfer`.
+
+Guarantees:
+
+- **Idempotency**: `(chainId, txHash, logIndex)` is unique; the raw log is archived into `chain_event_logs` in the same transaction that writes the derived tables.
+- **Reorgs**: the cursor stores the block hash; if it is no longer canonical on startup the indexer throws `ChainReorgError` and stops for manual reconciliation.
+- **Reconciliation**: after each batch, records / challenges / rounds / votes are rewritten from the on-chain views, then every touched `(categoryId, divisionId)` compares `bestRecordId()` with the stored pointer — the chain wins, and mismatches are logged to `reconcile_runs`.
+- **Paging**: the public RPC caps `eth_getLogs` at roughly 100 blocks; the default window is 100 and halves itself (down to 10) when a batch is rejected.
+- **Rounds**: round 0 is settled silently when a challenge escalates to evidence voting (no `VotingFinalized`), so reconciliation covers rounds `0..current`.
+
+## Leaderboard rules
 
 ```
-1. 只取 status = Verified(2)
+1. status = Verified(2) only
 2. direction = 1 → value DESC；direction = 2 → value ASC
-3. 同值按 submittedAt 更早
-4. 仍相同按 recordId 更小
+3. ties: earlier submittedAt first
+4. still tied: smaller recordId first
 ```
 
-排序方向读 `Record.direction`（提交时固化的快照），不读分类当前值。`displayValue` 由后端统一格式化：`1152345` + `ms` → `19:12.345`，`1432` + `cps`(2) → `14.32`。成绩撤销后立即可从榜单消失（软删 `status=3`，保留历史）。
+Ordering uses `Record.direction` (the snapshot taken at submission), not the category's current value. `displayValue` is formatted server-side: `1152345` + `ms` → `19:12.345`, `1432` + `cps`(2) → `14.32`. A revoked record disappears from the board immediately (soft delete, `status=3`, history kept).
 
-## 验证
+## Verify
 
 ```bash
 pnpm typecheck
-pnpm test        # 34 个用例（25 个接口/格式化 + 9 个事件处理器）
+pnpm test        # 34 cases (25 API/formatting + 9 event handlers)
 pnpm build
-pnpm abi:check   # 需要网络
+pnpm abi:check   # needs network
 ```
 
-## 目录
+## Layout
 
-- `abi/`：V2 ABI（由 `pnpm abi:gen` 生成，勿手改）
-- `prisma/`：Schema、迁移、Seed（V2 演示数据）
-- `src/app/api/`：21 个只读 Route Handlers
-- `src/indexer/`：ABI 筛选、配置、链上读取、事件处理、同步、校验
-- `src/lib/`：响应封装、校验、枚举、格式化、链上只读调用、服务层
-- `scripts/`：ABI 生成与链上校验、RPC 探针
-- `src/test/`：接口与事件处理器测试
+- `abi/` — V2 ABIs, generated by `pnpm abi:gen`; do not hand-edit
+- `prisma/` — schema, migrations, seed (V2 demo data)
+- `src/app/api/` — 21 read-only route handlers
+- `src/indexer/` — ABI filtering, config, chain reads, event handlers, sync, verification
+- `src/lib/` — response envelope, validation, enums, formatting, chain reads, services
+- `scripts/` — ABI generation and chain verification, RPC probe
+- `src/test/` — API and event-handler tests
