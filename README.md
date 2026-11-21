@@ -82,8 +82,31 @@ V2 was deployed to Monad Testnet with demo periods on 2026-11-21. Its addresses 
 transactions are in `deployments/monad-testnet-v2.json`. The previous game-specific deployment is
 preserved in `deployments/monad-testnet-v1.json` and must not be used with the V2 ABI.
 
-Source verification is pending explicit approval to upload the public sources and compiler metadata
-to the multi-explorer verification service. Verification must finish before initializing the indexer.
+Source verification is **complete**: all four V2 contracts return `perfect` match on Sourcify
+(MonadVision), chain `10143`, verified 2026-11-21. Constructor args used were `owner` for both
+registries, `(owner, categories, reasons)` for `RunProofCore`, and `(core)` for `RecordNFT`.
+
+## Live demo state (Monad Testnet)
+
+The deployed instance now carries product-shaped data on top of the deployment seed:
+
+- Category 4 `Minecraft Any%` — unit `ms`, `LowerIsBetter`, divisions `Java` and `Bedrock`
+- Category 5 `Click Speed` — unit `cps`, decimals 2, `HigherIsBetter`, division `All`
+- Demo periods were shortened on-chain to window 60s / commit 30s / reveal 30s / extension 30s
+- `recordId` 1–8 are Verified results; `recordId` 9 (a fake `18:59.999`) was challenged, voted down
+  (confirm power 400 vs deny 100) and revoked, which moved `bestRecordId(4,1)` back to `recordId` 1
+  in the same transaction
+- `RecordNFT` #1 is Verified; #9 remains minted but reports `Revoked`
+
+A read-only leaderboard page lives in `web/demo.html`:
+
+```bash
+python3 -m http.server 8787        # from the repo root
+# open http://127.0.0.1:8787/web/demo.html
+```
+
+It builds the board from `RecordSubmitted` logs, sorts by the category rule, and shows whether the
+local first place matches the on-chain `bestRecordId` on every refresh.
 
 ## Demo scripts
 
