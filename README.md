@@ -46,6 +46,17 @@ result is auditable by anyone.
 
 ## Live demo
 
+The full V2 interface supports wallet connection, record submission, voting, user profiles, and direct
+Monad Testnet reads:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The repository also includes a build-free read-only fallback:
+
 ```bash
 python3 -m http.server 8787        # from the repo root
 # open http://127.0.0.1:8787/web/demo.html

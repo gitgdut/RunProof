@@ -1,0 +1,356 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Chain enums are stored as Int so the database cannot drift from the contracts.
+//   0 None, 1 Provisional, 2 Verified, 3 Revoked                              (RecordStatus)
+//   0 None, 1 Voting, 2 EvidenceVoting, 3 Confirmed, 4 Denied, 5 Inconclusive (ChallengeStatus)
+//   direction: 1 HigherIsBetter, 2 LowerIsBetter, 0 None                      (RankingDirection)
+//   0 PlayerStake, 1 ChallengeBond, 2 VoterStake                              (StakeKind / SlashKind)
+//   0 ChallengerReward, 1 PlayerCompensation, 2 VoterReward                    (RewardKind)
+//   0 None, 1 Voting, 2 Approved, 3 Rejected, 4 Inconclusive                   (ProposalStatus)
+
+model Category {
+  id             Int        @id
+  name           String
+  descriptionURI String     @default("")
+  unit           String
+  decimals       Int        @default(0)
+  direction      Int        @default(1)
+  ruleVersion    Int        @default(0)
+  baseStake      Decimal    @default(0) @db.Decimal(78, 0)
+  active         Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  divisions      Division[]
+  records        Record[]
+
+  @@map("categories")
+}
+
+model Division {
+  categoryId Int
+  divisionId Int
+  name       String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([categoryId, divisionId])
+  @@index([categoryId, active])
+  @@map("divisions")
+}
+
+model Record {
+  id               Int       @id
+  player           String
+  categoryId       Int
+  divisionId       Int
+  value            Decimal   @db.Decimal(78, 0)
+  direction        Int       @default(1)
+  evidenceHash     String    @unique
+  evidenceURI      String
+  stake            Decimal   @db.Decimal(78, 0)
+  submittedAt      DateTime
+  deadline         DateTime
+  ruleVersion      Int       @default(0)
+  status           Int       @default(1)
+  stakeSettled     Boolean   @default(false)
+  activeChallenges Int       @default(0)
+  transactionHash  String    @unique
+  logIndex         Int       @default(0)
+  blockNumber      BigInt?
+  indexedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  category         Category  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  challenges       Challenge[]
+  nft              NFT?
+  rewards          Reward[]
+  stakeFlows       StakeFlow[]
+
+  @@index([categoryId, divisionId, status, value])
+  @@index([player, submittedAt])
+  @@index([status, submittedAt])
+  @@map("records")
+}
+
+model ChallengeReason {
+  id                Int              @id
+  code              String           @unique
+  name              String
+  description       String?
+  discovererAddress String?
+  registeredAt      DateTime?
+  registered        Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  challenges        Challenge[]
+
+  @@map("challenge_reasons")
+}
+
+model ReasonProposal {
+  id        Int                  @id
+  proposer  String
+  name      String
+  bond      Decimal              @db.Decimal(78, 0)
+  endTime   DateTime
+  status    Int                  @default(1)
+  reasonId  Int?
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  votes     ReasonProposalVote[]
+
+  @@index([status])
+  @@map("reason_proposals")
+}
+
+model ReasonProposalVote {
+  id              String         @id @default(cuid())
+  proposalId      Int
+  voter           String
+  support         Boolean
+  stake           Decimal        @db.Decimal(78, 0)
+  power           Decimal        @db.Decimal(78, 0)
+  transactionHash String
+  logIndex        Int
+  blockNumber     BigInt?
+  createdAt       DateTime
+  proposal        ReasonProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([transactionHash, logIndex])
+  @@index([proposalId])
+  @@map("reason_proposal_votes")
+}
+
+model Challenge {
+  id              Int             @id
+  recordId        Int
+  reasonId        Int
+  challenger      String
+  bond            Decimal         @db.Decimal(78, 0)
+  reserved        Decimal         @default(0) @db.Decimal(78, 0)
+  evidenceHash    String          @unique
+  evidenceURI     String
+  status          Int             @default(1)
+  round           Int             @default(0)
+  special         Boolean         @default(false)
+  extended        Boolean         @default(false)
+  evidenceCount   Int             @default(1)
+  createdAt       DateTime
+  transactionHash String          @unique
+  logIndex        Int             @default(0)
+  blockNumber     BigInt?
+  indexedAt       DateTime?
+  record          Record          @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  reason          ChallengeReason @relation(fields: [reasonId], references: [id], onDelete: Restrict)
+  rounds          ChallengeRound[]
+  votes           Vote[]
+  evidence        Evidence[]
+
+  @@index([status, createdAt])
+  @@index([recordId, reasonId])
+  @@index([challenger, createdAt])
+  @@map("challenges")
+}
+
+model ChallengeRound {
+  challengeId     Int
+  round           Int
+  commitEnd       DateTime?
+  revealEnd       DateTime?
+  confirmPower    Decimal   @default(0) @db.Decimal(78, 0)
+  denyPower       Decimal   @default(0) @db.Decimal(78, 0)
+  confirmStake    Decimal   @default(0) @db.Decimal(78, 0)
+  denyStake       Decimal   @default(0) @db.Decimal(78, 0)
+  committedStake  Decimal   @default(0) @db.Decimal(78, 0)
+  committedVoters Int       @default(0)
+  revealedVoters  Int       @default(0)
+  finalized       Boolean   @default(false)
+  winner          Int?
+  winnerPower     Decimal   @default(0) @db.Decimal(78, 0)
+  rewardPool      Decimal   @default(0) @db.Decimal(78, 0)
+  slashBps        Int       @default(0)
+  updatedAt       DateTime  @updatedAt
+  challenge       Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@id([challengeId, round])
+  @@map("challenge_rounds")
+}
+
+model Vote {
+  id                    String    @id @default(cuid())
+  challengeId           Int
+  voterAddress          String
+  round                 Int
+  votingChoice          Int?
+  stakeAmount           Decimal   @db.Decimal(78, 0)
+  votingPower           Decimal?
+  commitHash            String?
+  commitTransactionHash String?
+  revealTransactionHash String?
+  revealed              Boolean   @default(false)
+  claimed               Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  challenge             Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@unique([challengeId, round, voterAddress])
+  @@index([voterAddress, createdAt])
+  @@index([commitTransactionHash])
+  @@map("votes")
+}
+
+model Evidence {
+  id              String    @id @default(cuid())
+  challengeId     Int
+  round           Int
+  submitter       String
+  evidenceHash    String
+  evidenceURI     String
+  transactionHash String
+  logIndex        Int
+  blockNumber     BigInt?
+  createdAt       DateTime
+  challenge       Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@unique([transactionHash, logIndex])
+  @@index([challengeId, round])
+  @@map("evidence")
+}
+
+model Reward {
+  id              String   @id @default(cuid())
+  source          String
+  recordId        Int?
+  reasonId        Int?
+  challengeId     Int?
+  proposalId      Int?
+  walletAddress   String
+  amount          Decimal  @db.Decimal(78, 0)
+  kind            Int?
+  transactionHash String
+  logIndex        Int
+  blockNumber     BigInt?
+  createdAt       DateTime
+  record          Record?  @relation(fields: [recordId], references: [id], onDelete: SetNull)
+
+  @@unique([transactionHash, logIndex])
+  @@index([walletAddress, createdAt])
+  @@index([recordId])
+  @@map("rewards")
+}
+
+model StakeFlow {
+  id              String   @id @default(cuid())
+  flow            String
+  recordId        Int?
+  reasonId        Int?
+  challengeId     Int?
+  walletAddress   String
+  amount          Decimal  @db.Decimal(78, 0)
+  kind            Int
+  transactionHash String
+  logIndex        Int
+  blockNumber     BigInt?
+  createdAt       DateTime
+  record          Record?  @relation(fields: [recordId], references: [id], onDelete: SetNull)
+
+  @@unique([transactionHash, logIndex])
+  @@index([walletAddress, createdAt])
+  @@map("stake_flows")
+}
+
+model Withdrawal {
+  id              String   @id @default(cuid())
+  source          String
+  walletAddress   String
+  amount          Decimal  @db.Decimal(78, 0)
+  transactionHash String
+  logIndex        Int
+  blockNumber     BigInt?
+  createdAt       DateTime
+
+  @@unique([transactionHash, logIndex])
+  @@index([walletAddress, createdAt])
+  @@map("withdrawals")
+}
+
+model NFT {
+  id              Int      @id
+  recordId        Int      @unique
+  ownerAddress    String
+  status          Int
+  transactionHash String
+  logIndex        Int
+  createdAt       DateTime
+  updatedAt       DateTime @updatedAt
+  record          Record   @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@index([ownerAddress, status])
+  @@map("nfts")
+}
+
+model Leaderboard {
+  categoryId   Int
+  divisionId   Int
+  bestRecordId Int
+  bestValue    Decimal  @db.Decimal(78, 0)
+  blockNumber  BigInt?
+  updatedAt    DateTime @updatedAt
+
+  @@id([categoryId, divisionId])
+  @@map("leaderboards")
+}
+
+model ChainEventLog {
+  id              String   @id @default(cuid())
+  chainId         Int
+  contractAddress String
+  source          String
+  eventName       String
+  transactionHash String
+  logIndex        Int
+  blockNumber     BigInt
+  blockHash       String
+  payload         Json
+  processedAt     DateTime @default(now())
+
+  @@unique([chainId, transactionHash, logIndex])
+  @@index([contractAddress, blockNumber])
+  @@map("chain_event_logs")
+}
+
+model SyncState {
+  id              String   @id
+  chainId         Int
+  contractAddress String
+  lastBlock       BigInt   @default(0)
+  lastBlockHash   String?
+  updatedAt       DateTime @updatedAt
+
+  @@unique([chainId, contractAddress])
+  @@map("sync_states")
+}
+
+// One row per reconciliation pass so /api/health can report index lag and drift.
+model ReconcileRun {
+  id            String   @id @default(cuid())
+  ranAt         DateTime @default(now())
+  chainHead     BigInt
+  indexedBlock  BigInt
+  lagBlocks     BigInt
+  checkedBoards Int      @default(0)
+  mismatches    Json
+  ok            Boolean  @default(true)
+
+  @@index([ranAt])
+  @@map("reconcile_runs")
+}

@@ -1,6 +1,13 @@
+node_modules/
+.next/
 out/
 cache/
+coverage/
+*.tsbuildinfo
 broadcast/*/31337/
 broadcast/**/dry-run/
 .env
+.env.*
+!.env.example
 *.key
+.DS_Store

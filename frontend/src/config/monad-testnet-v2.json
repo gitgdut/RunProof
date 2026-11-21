@@ -1,0 +1,62 @@
+{
+  "version": "v2-general-achievements",
+  "status": "deployed",
+  "sourceVerification": {
+    "provider": "sourcify",
+    "explorer": "MonadVision",
+    "status": "perfect",
+    "verifiedAt": "2026-11-21T15:20:00+08:00",
+    "contracts": {
+      "CategoryRegistry": "perfect",
+      "ChallengeReasonRegistry": "perfect",
+      "RunProofCore": "perfect",
+      "RecordNFT": "perfect"
+    },
+    "explorerBase": "https://testnet.monadexplorer.com/address/"
+  },
+  "chainId": 10143,
+  "network": "Monad Testnet",
+  "deployer": "0xc338e05fD4F8322E1562DB052c42995223254B97",
+  "deploymentBlock": 81509823,
+  "lastSetupBlock": 81509906,
+  "demoPeriods": "window=10min commit=2min reveal=2min extension=2min",
+  "liveDemoPeriods": "window=60s commit=30s reveal=30s extension=30s",
+  "poolSeedWei": "2000000000000000000",
+  "contracts": {
+    "CategoryRegistry": "0x8D3aEdd92fA2151F61877D0e844a556E4eAB91A7",
+    "ChallengeReasonRegistry": "0x522d2883FA6ac437F414874B9B7cEEAfAE4caC0b",
+    "RunProofCore": "0x1eb96bf618151adA2F7174CE9b8c41F45486084F",
+    "RecordNFT": "0x967D0B53cb05BC9D6c85BEB087444e6f5a3e1360"
+  },
+  "deploymentTransactions": {
+    "CategoryRegistry": "0xabaa3bf12242e4f70b9d2da28f0dda18ad724e3ef43498d993aaca46cea7e1f1",
+    "ChallengeReasonRegistry": "0x0c5941577bb7190ffc7d1929a907e8c947597bf21fcdd448ece94fb7e742bce1",
+    "RunProofCore": "0x6d74cf6cbc1c43606d36445147396d4d9501d3e99d71a98b51e38e82ff9af4c8",
+    "RecordNFT": "0x13b8d86a9732c00658543033b9eecae8fd41cf9c2087bbfb595c52f500baae83"
+  },
+  "demoCategories": {
+    "4": {
+      "name": "Minecraft Any%",
+      "unit": "ms",
+      "decimals": 0,
+      "direction": "LowerIsBetter",
+      "divisions": { "1": "Java", "2": "Bedrock" }
+    },
+    "5": {
+      "name": "Click Speed",
+      "unit": "cps",
+      "decimals": 2,
+      "direction": "HigherIsBetter",
+      "divisions": { "1": "All" }
+    }
+  },
+  "demoEvidence": {
+    "verifiedRecords": [1, 2, 3, 4, 5, 6, 7, 8],
+    "revokedRecord": 9,
+    "fakeSubmissionTx": "0xba4e46f26dc5bb2c031fe90652129d2721469e6ac157c08521dfdc83cb0fa0be",
+    "challengeTx": "0x1d0d693b8f98c8f1a998df9a88803a9683fd43286ca84c373b800e7539ae76aa",
+    "finalizeVotingTx": "0x105a94f6ed58afa34b23fa4eec9c211b5e04bfdd66bd8cccad9bc6839ce6d823",
+    "voteOutcome": "confirmPower=400 denyPower=100 (80% confirm, 5 voters, 0.1 MON each)",
+    "leaderFellBackTo": 1
+  }
+}
