@@ -15,7 +15,11 @@ contract RecordNFT is ERC721 {
     IRunProofCore public immutable core;
 
     event NFTMinted(
-        uint256 indexed recordId, address indexed player, uint256 indexed gameId, uint256 score, bytes32 evidenceHash
+        uint256 indexed recordId,
+        address indexed player,
+        uint256 indexed categoryId,
+        uint256 value,
+        bytes32 evidenceHash
     );
 
     constructor(IRunProofCore core_) ERC721("RunProof Record", "RUNPROOF") {
@@ -24,11 +28,11 @@ contract RecordNFT is ERC721 {
 
     /// @notice Anyone may trigger the mint for a Verified record; the token always goes to the player.
     function mint(uint256 recordId) external returns (uint256) {
-        (address player, uint256 gameId,, uint256 score, bytes32 evidenceHash, IRunProofCore.RecordStatus status) =
+        (address player, uint256 categoryId,, uint256 value, bytes32 evidenceHash, IRunProofCore.RecordStatus status) =
             core.recordSummary(recordId);
         require(status == IRunProofCore.RecordStatus.Verified, "record not verified");
         _mint(player, recordId); // reverts if already minted
-        emit NFTMinted(recordId, player, gameId, score, evidenceHash);
+        emit NFTMinted(recordId, player, categoryId, value, evidenceHash);
         return recordId;
     }
 
@@ -44,21 +48,36 @@ contract RecordNFT is ERC721 {
 
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         _requireOwned(tokenId);
-        (address player, uint256 gameId, uint256 mode, uint256 score, bytes32 evidenceHash, IRunProofCore.RecordStatus st) =
-            core.recordSummary(tokenId);
+        (
+            address player,
+            uint256 categoryId,
+            uint256 divisionId,
+            uint256 value,
+            bytes32 evidenceHash,
+            IRunProofCore.RecordStatus st
+        ) = core.recordSummary(tokenId);
         string memory status = st == IRunProofCore.RecordStatus.Verified
             ? "Verified"
             : st == IRunProofCore.RecordStatus.Revoked ? "Revoked" : "Provisional";
         bytes memory json = abi.encodePacked(
-            '{"name":"RunProof Record #', tokenId.toString(),
-            '","description":"On-chain certified game record. Status is read live from RunProofCore.",',
-            '"attributes":[{"trait_type":"Record ID","value":"', tokenId.toString(),
-            '"},{"trait_type":"Player","value":"', Strings.toHexString(player),
-            '"},{"trait_type":"Game ID","value":"', gameId.toString(),
-            '"},{"trait_type":"Mode","value":"', mode.toString(),
-            '"},{"trait_type":"Score","value":"', score.toString(),
-            '"},{"trait_type":"Evidence Hash","value":"', Strings.toHexString(uint256(evidenceHash), 32),
-            '"},{"trait_type":"Verification Status","value":"', status, '"}]}'
+            '{"name":"RunProof Record #',
+            tokenId.toString(),
+            '","description":"On-chain certified achievement. Status is read live from RunProofCore.",',
+            '"attributes":[{"trait_type":"Record ID","value":"',
+            tokenId.toString(),
+            '"},{"trait_type":"Player","value":"',
+            Strings.toHexString(player),
+            '"},{"trait_type":"Category ID","value":"',
+            categoryId.toString(),
+            '"},{"trait_type":"Division","value":"',
+            divisionId.toString(),
+            '"},{"trait_type":"Value","value":"',
+            value.toString(),
+            '"},{"trait_type":"Evidence Hash","value":"',
+            Strings.toHexString(uint256(evidenceHash), 32),
+            '"},{"trait_type":"Verification Status","value":"',
+            status,
+            '"}]}'
         );
         return string.concat("data:application/json;base64,", Base64.encode(json));
     }

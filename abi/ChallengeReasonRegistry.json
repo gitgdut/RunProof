@@ -38,23 +38,10 @@
   },
   {
     "type": "function",
-    "name": "cheatCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "claimVoteStake",
     "inputs": [
       {
-        "name": "id",
+        "name": "proposalId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -86,7 +73,7 @@
     "name": "finalizeProposal",
     "inputs": [
       {
-        "name": "id",
+        "name": "proposalId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -103,10 +90,10 @@
   },
   {
     "type": "function",
-    "name": "getCheat",
+    "name": "getReason",
     "inputs": [
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -115,7 +102,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct CheatRegistry.Cheat",
+        "internalType": "struct ChallengeReasonRegistry.Reason",
         "components": [
           {
             "name": "code",
@@ -157,7 +144,7 @@
     "name": "isRegistered",
     "inputs": [
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -327,10 +314,10 @@
       {
         "name": "status",
         "type": "uint8",
-        "internalType": "enum CheatRegistry.ProposalStatus"
+        "internalType": "enum ChallengeReasonRegistry.ProposalStatus"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -339,7 +326,7 @@
   },
   {
     "type": "function",
-    "name": "proposeCheat",
+    "name": "proposeReason",
     "inputs": [
       {
         "name": "name",
@@ -359,7 +346,7 @@
     ],
     "outputs": [
       {
-        "name": "id",
+        "name": "proposalId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -394,7 +381,20 @@
   },
   {
     "type": "function",
-    "name": "registerCheat",
+    "name": "reasonCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registerReason",
     "inputs": [
       {
         "name": "name",
@@ -502,7 +502,7 @@
     "name": "voteOnProposal",
     "inputs": [
       {
-        "name": "id",
+        "name": "proposalId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -590,7 +590,63 @@
   },
   {
     "type": "event",
-    "name": "CheatProposalFinalized",
+    "name": "DiscovererRewarded",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reasonId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "proposer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferred",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ParamsUpdated",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReasonProposalFinalized",
     "inputs": [
       {
         "name": "proposalId",
@@ -602,10 +658,10 @@
         "name": "status",
         "type": "uint8",
         "indexed": false,
-        "internalType": "enum CheatRegistry.ProposalStatus"
+        "internalType": "enum ChallengeReasonRegistry.ProposalStatus"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -615,7 +671,7 @@
   },
   {
     "type": "event",
-    "name": "CheatProposalVoted",
+    "name": "ReasonProposalVoted",
     "inputs": [
       {
         "name": "proposalId",
@@ -652,7 +708,7 @@
   },
   {
     "type": "event",
-    "name": "CheatProposed",
+    "name": "ReasonProposed",
     "inputs": [
       {
         "name": "proposalId",
@@ -689,10 +745,10 @@
   },
   {
     "type": "event",
-    "name": "CheatRegistered",
+    "name": "ReasonRegistered",
     "inputs": [
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -711,56 +767,6 @@
       },
       {
         "name": "discoverer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DiscovererRewarded",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "cheatId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "proposer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "OwnershipTransferred",
-    "inputs": [
-      {
-        "name": "previousOwner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newOwner",
         "type": "address",
         "indexed": true,
         "internalType": "address"

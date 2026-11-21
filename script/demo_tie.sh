@@ -8,7 +8,7 @@ RPC=${MONAD_RPC_URL:?}; CORE=${CORE:?}
 S="cast send --rpc-url $RPC --legacy"
 [ "$(cast chain-id --rpc-url $RPC 2>/dev/null)" = "10143" ] || die "cannot reach Monad testnet (chain id != 10143)"
 # every transaction must succeed; on failure stop instead of racing ahead. Never echo args (they contain keys).
-tx() { tx "$@" >/dev/null 2>&1 || die "transaction failed: cast send ${1:-?} ${2:-}"; }
+tx() { $S "$@" >/dev/null 2>&1 || die "transaction failed: cast send ${1:-?} ${2:-}"; }
 STAKE=100000000000000000
 now() { cast block latest --field timestamp --rpc-url $RPC; }
 waitts() { [ -n "${1:-}" ] || die "empty timestamp (chain read failed)"; while [ "$(now)" -lt "$1" ]; do sleep 5; done; sleep 2; }
@@ -33,8 +33,8 @@ CH="$(mk)"; echo "$CH" >> $WF; CHA=${CH%% *}; CHK=${CH##* }
 echo "wallet keys saved to $WF (chmod 600)"
 for w in "${W[@]:1}" "$CH"; do tx ${w%% *} --value 600000000000000000 --private-key $PRIVATE_KEY >/dev/null; done; echo funded
 
-PAY=$(cast call $CORE "requiredPayment(uint256,uint256,uint256)(uint256)" 1 3 7000 --rpc-url $RPC | awk '{print $1}')
-tx $CORE "submitRecord(uint256,uint256,uint256,bytes32,string)" 1 3 7000 $(cast keccak "tie-$(date +%s)") "ipfs://tie-case" --value $PAY --private-key $PRIVATE_KEY
+PAY=$(cast call $CORE "requiredPayment(uint256,uint256,uint256)(uint256)" 3 3 7000 --rpc-url $RPC | awk '{print $1}')
+tx $CORE "submitRecord(uint256,uint256,uint256,bytes32,string)" 3 3 7000 $(cast keccak "tie-$(date +%s)") "ipfs://tie-case" --value $PAY --private-key $PRIVATE_KEY
 REC=$(cast call $CORE "recordCount()(uint256)" --rpc-url $RPC); echo "record id=$REC"
 tx $CORE "challengeRecord(uint256,uint256,bytes32,string)" $REC 2 $(cast keccak "tie-proof-$(date +%s)") "ipfs://proof" --value 100000000000000000 --private-key $CHK
 CID=$(cast call $CORE "challengeCount()(uint256)" --rpc-url $RPC); echo "challenge id=$CID"

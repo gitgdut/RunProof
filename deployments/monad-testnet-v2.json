@@ -1,0 +1,12 @@
+{
+  "version": "v2-general-achievements",
+  "status": "not-deployed",
+  "chainId": 10143,
+  "network": "Monad Testnet",
+  "contracts": {
+    "CategoryRegistry": null,
+    "ChallengeReasonRegistry": null,
+    "RunProofCore": null,
+    "RecordNFT": null
+  }
+}

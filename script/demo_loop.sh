@@ -10,15 +10,15 @@ waitts() { while [ "$(now)" -lt "$1" ]; do sleep 5; done; sleep 2; }
 mk() { cast wallet new --json | python3 -c 'import json,sys;d=json.load(sys.stdin)["data"][0];print(d["address"],d["private_key"])'; }
 STAKE=100000000000000000   # 0.1 MON per vote
 
-# record B first: it will auto-verify while the cheat case runs
+# Record B first: it will auto-verify while the challenged submission runs.
 if [ -z "${RB:-}" ]; then
-PAYB=$(cast call $CORE "requiredPayment(uint256,uint256,uint256)(uint256)" 1 1 5000 --rpc-url $RPC | awk '{print $1}')
-$S $CORE "submitRecord(uint256,uint256,uint256,bytes32,string)" 1 1 5000 $(cast keccak "honest-$(date +%s)") "ipfs://honest" --value $PAYB --private-key $PRIVATE_KEY >/dev/null
+PAYB=$(cast call $CORE "requiredPayment(uint256,uint256,uint256)(uint256)" 1 1 12000 --rpc-url $RPC | awk '{print $1}')
+$S $CORE "submitRecord(uint256,uint256,uint256,bytes32,string)" 1 1 12000 $(cast keccak "honest-$(date +%s)") "ipfs://honest" --value $PAYB --private-key $PRIVATE_KEY >/dev/null
 RB=$(cast call $CORE "recordCount()(uint256)" --rpc-url $RPC)
 fi; echo "record B (honest) id=$RB"
-PAYA=$(cast call $CORE "requiredPayment(uint256,uint256,uint256)(uint256)" 1 2 50000 --rpc-url $RPC | awk '{print $1}')
-$S $CORE "submitRecord(uint256,uint256,uint256,bytes32,string)" 1 2 50000 $(cast keccak "cheat-$(date +%s)") "ipfs://cheated" --value $PAYA --private-key $PRIVATE_KEY >/dev/null
-RA=$(cast call $CORE "recordCount()(uint256)" --rpc-url $RPC); echo "record A (cheated) id=$RA"
+PAYA=$(cast call $CORE "requiredPayment(uint256,uint256,uint256)(uint256)" 3 2 50000 --rpc-url $RPC | awk '{print $1}')
+$S $CORE "submitRecord(uint256,uint256,uint256,bytes32,string)" 3 2 50000 $(cast keccak "invalid-$(date +%s)") "ipfs://invalid" --value $PAYA --private-key $PRIVATE_KEY >/dev/null
+RA=$(cast call $CORE "recordCount()(uint256)" --rpc-url $RPC); echo "record A (challenged) id=$RA"
 
 W=(); for i in 0 1 2 3 4; do W+=("$(mk)"); done
 for w in "${W[@]}"; do [[ "$w" =~ ^0x[0-9a-fA-F]{40}\ 0x[0-9a-fA-F]{64}$ ]] || { echo "wallet generation failed"; exit 1; }; done

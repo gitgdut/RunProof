@@ -3,8 +3,8 @@ pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IGameRegistry} from "./interfaces/IGameRegistry.sol";
-import {ICheatRegistry} from "./interfaces/ICheatRegistry.sol";
+import {ICategoryRegistry} from "./interfaces/ICategoryRegistry.sol";
+import {IChallengeReasonRegistry} from "./interfaces/IChallengeReasonRegistry.sol";
 import {IRunProofCore} from "./interfaces/IRunProofCore.sol";
 
 /// @title RunProofCore
@@ -25,25 +25,48 @@ import {IRunProofCore} from "./interfaces/IRunProofCore.sol";
 contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
     // ------------------------------------------------------------------ types
 
-    enum ChallengeStatus { None, Voting, EvidenceVoting, Confirmed, Denied, Inconclusive }
-    /// Round 0: Confirm = Confirm Cheating, Deny = Deny Cheating.
+    enum ChallengeStatus {
+        None,
+        Voting,
+        EvidenceVoting,
+        Confirmed,
+        Denied,
+        Inconclusive
+    }
+    /// Round 0: Confirm = Confirm Invalid, Deny = Deny Invalid.
     /// Round 1 (evidence sufficiency): Confirm = Evidence Sufficient, Deny = Evidence Required.
-    enum Choice { None, Confirm, Deny }
-    enum StakeKind { PlayerStake, ChallengeBond, VoterStake }
-    enum SlashKind { PlayerStake, ChallengeBond, VoterStake }
-    enum RewardKind { ChallengerReward, PlayerCompensation, VoterReward }
+    enum Choice {
+        None,
+        Confirm,
+        Deny
+    }
+    enum StakeKind {
+        PlayerStake,
+        ChallengeBond,
+        VoterStake
+    }
+    enum SlashKind {
+        PlayerStake,
+        ChallengeBond,
+        VoterStake
+    }
+    enum RewardKind {
+        ChallengerReward,
+        PlayerCompensation,
+        VoterReward
+    }
 
     struct Record {
         address player;
-        uint256 gameId;
-        uint256 gameMode;
-        uint256 score;
+        uint256 categoryId;
+        uint256 divisionId;
+        uint256 value;
+        ICategoryRegistry.RankingDirection direction;
         bytes32 evidenceHash;
         string evidenceURI;
         uint256 stake;
         uint64 submittedAt;
         uint64 deadline;
-        uint32 gameVersion;
         uint32 ruleVersion;
         RecordStatus status;
         bool stakeSettled;
@@ -52,7 +75,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
 
     struct Challenge {
         uint256 recordId;
-        uint256 cheatId;
+        uint256 reasonId;
         address challenger;
         uint256 bond;
         uint256 reserved; // pool reservation for special challenges
@@ -99,7 +122,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
         uint256 minVoteStake;
         uint256 maxVoteStake;
         uint256 quorumPower;
-        uint256 recordBreakerBps; // stake multiplier when score beats the verified top
+        uint256 leaderMultiplierBps; // stake multiplier when value beats the verified top
         uint32 minVoters;
         uint64 challengeWindow;
         uint64 commitPeriod;
@@ -117,23 +140,21 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
 
     uint256 public constant POWER_UNIT = 1e15;
 
-    IGameRegistry public immutable games;
-    ICheatRegistry public immutable cheats;
+    ICategoryRegistry public immutable categories;
+    IChallengeReasonRegistry public immutable reasons;
 
     Params public params;
-    uint256[] public tierThresholds;
-    uint256[] public tierStakes; // length = thresholds + 1
-
     uint256 public recordCount;
     uint256 public challengeCount;
     mapping(uint256 => Record) private _records;
     mapping(uint256 => Challenge) private _challenges;
-    mapping(uint256 => mapping(uint256 => uint256)) public challengeOf; // recordId => cheatId => challengeId
+    mapping(uint256 => mapping(uint256 => uint256)) public challengeOf; // recordId => reasonId => challengeId
     mapping(uint256 => mapping(uint8 => Round)) public rounds;
     mapping(uint256 => mapping(uint8 => mapping(address => Vote))) public votes;
     mapping(bytes32 => bool) public evidenceUsed; // record evidence hashes
     mapping(bytes32 => bool) public challengeEvidenceUsed;
-    mapping(uint256 => mapping(uint256 => uint256)) public verifiedTop; // gameId => mode => score
+    mapping(uint256 => mapping(uint256 => uint256)) public bestRecordId;
+    mapping(bytes32 => uint256[]) private _boardHeaps;
 
     mapping(address => uint256) public claimable;
     uint256 public poolBalance; // protocol reward pool (includes reserved part)
@@ -144,9 +165,9 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
     event RecordSubmitted(
         uint256 indexed recordId,
         address indexed player,
-        uint256 indexed gameId,
-        uint256 gameMode,
-        uint256 score,
+        uint256 indexed categoryId,
+        uint256 divisionId,
+        uint256 value,
         uint256 stake,
         bytes32 evidenceHash,
         string evidenceURI,
@@ -154,7 +175,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
     );
     event ChallengeCreated(
         uint256 indexed recordId,
-        uint256 indexed cheatId,
+        uint256 indexed reasonId,
         address indexed challenger,
         uint256 challengeId,
         uint256 bond,
@@ -165,7 +186,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
     );
     event EvidenceSubmitted(
         uint256 indexed recordId,
-        uint256 indexed cheatId,
+        uint256 indexed reasonId,
         address indexed submitter,
         uint256 challengeId,
         uint8 round,
@@ -173,11 +194,16 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
         string evidenceURI
     );
     event VoteCommitted(
-        uint256 indexed recordId, uint256 indexed cheatId, address indexed voter, uint256 challengeId, uint8 round, uint256 stake
+        uint256 indexed recordId,
+        uint256 indexed reasonId,
+        address indexed voter,
+        uint256 challengeId,
+        uint8 round,
+        uint256 stake
     );
     event VoteRevealed(
         uint256 indexed recordId,
-        uint256 indexed cheatId,
+        uint256 indexed reasonId,
         address indexed voter,
         uint256 challengeId,
         uint8 round,
@@ -185,28 +211,37 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
         uint256 power
     );
     event VotingExtended(
-        uint256 indexed recordId, uint256 indexed cheatId, uint256 challengeId, uint64 newCommitEnd, uint64 newRevealEnd
+        uint256 indexed recordId,
+        uint256 indexed reasonId,
+        uint256 challengeId,
+        uint64 newCommitEnd,
+        uint64 newRevealEnd
     );
     event EvidenceVotingStarted(
-        uint256 indexed recordId, uint256 indexed cheatId, uint256 challengeId, uint64 commitEnd, uint64 revealEnd
+        uint256 indexed recordId, uint256 indexed reasonId, uint256 challengeId, uint64 commitEnd, uint64 revealEnd
     );
     event VotingFinalized(
         uint256 indexed recordId,
-        uint256 indexed cheatId,
+        uint256 indexed reasonId,
         uint256 challengeId,
         ChallengeStatus outcome,
         uint8 round,
         uint256 confirmPower,
         uint256 denyPower
     );
-    event RecordVerified(uint256 indexed recordId, address indexed player, uint256 indexed gameId, uint256 score);
-    event RecordRevoked(uint256 indexed recordId, address indexed player, uint256 indexed cheatId, uint256 challengeId);
+    event RecordVerified(uint256 indexed recordId, address indexed player, uint256 indexed categoryId, uint256 value);
+    event RecordRevoked(
+        uint256 indexed recordId, address indexed player, uint256 indexed reasonId, uint256 challengeId
+    );
+    event LeaderboardUpdated(
+        uint256 indexed categoryId, uint256 indexed divisionId, uint256 indexed bestRecordId, uint256 bestValue
+    );
     event StakeReturned(
-        uint256 indexed recordId, uint256 indexed cheatId, address indexed account, uint256 amount, StakeKind kind
+        uint256 indexed recordId, uint256 indexed reasonId, address indexed account, uint256 amount, StakeKind kind
     );
     event StakeSlashed(
         uint256 indexed recordId,
-        uint256 indexed cheatId,
+        uint256 indexed reasonId,
         address indexed account,
         uint256 amount,
         SlashKind kind,
@@ -214,7 +249,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
     );
     event RewardDistributed(
         uint256 indexed recordId,
-        uint256 indexed cheatId,
+        uint256 indexed reasonId,
         address indexed account,
         uint256 amount,
         RewardKind kind,
@@ -227,9 +262,9 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
 
     // ------------------------------------------------------------ constructor
 
-    constructor(address owner_, IGameRegistry games_, ICheatRegistry cheats_) Ownable(owner_) {
-        games = games_;
-        cheats = cheats_;
+    constructor(address owner_, ICategoryRegistry categories_, IChallengeReasonRegistry reasons_) Ownable(owner_) {
+        categories = categories_;
+        reasons = reasons_;
         params = Params({
             submissionFee: 0.01 ether,
             challengeBond: 0.1 ether,
@@ -238,7 +273,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
             minVoteStake: 0.05 ether,
             maxVoteStake: 5 ether,
             quorumPower: 300, // 0.3 MON of total revealed stake
-            recordBreakerBps: 20000,
+            leaderMultiplierBps: 20000,
             minVoters: 3,
             challengeWindow: 30 days,
             commitPeriod: 3 days,
@@ -251,8 +286,6 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
             voterRewardBps: 4000,
             playerCompBps: 5000
         });
-        tierThresholds = [10_000, 100_000, 1_000_000];
-        tierStakes = [0.05 ether, 0.2 ether, 1 ether, 5 ether];
     }
 
     // ------------------------------------------------------------------ admin
@@ -264,18 +297,8 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
         require(uint256(p.challengerRewardBps) + p.voterRewardBps <= 10000, "reward bps");
         require(p.minVoteStake >= POWER_UNIT && p.maxVoteStake >= p.minVoteStake, "stake range");
         require(p.minVoters > 0 && p.commitPeriod > 0 && p.revealPeriod > 0 && p.extensionPeriod > 0, "periods");
-        require(p.specialBondMultiplier > 0 && p.recordBreakerBps >= 10000, "multipliers");
+        require(p.specialBondMultiplier > 0 && p.leaderMultiplierBps >= 10000, "multipliers");
         params = p;
-        emit ParamsUpdated();
-    }
-
-    function setStakeTiers(uint256[] calldata thresholds, uint256[] calldata stakes) external onlyOwner {
-        require(stakes.length == thresholds.length + 1 && stakes.length > 0, "length");
-        for (uint256 i = 1; i < thresholds.length; i++) {
-            require(thresholds[i] > thresholds[i - 1], "not ascending");
-        }
-        tierThresholds = thresholds;
-        tierStakes = stakes;
         emit ParamsUpdated();
     }
 
@@ -310,27 +333,36 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
         returns (address, uint256, uint256, uint256, bytes32, RecordStatus)
     {
         Record storage r = _records[recordId];
-        return (r.player, r.gameId, r.gameMode, r.score, r.evidenceHash, r.status);
+        return (r.player, r.categoryId, r.divisionId, r.value, r.evidenceHash, r.status);
+    }
+
+    function outranks(uint256 candidateRecordId, uint256 incumbentRecordId) external view returns (bool) {
+        require(candidateRecordId != 0 && candidateRecordId <= recordCount, "unknown candidate");
+        require(incumbentRecordId != 0 && incumbentRecordId <= recordCount, "unknown incumbent");
+        Record storage candidate = _records[candidateRecordId];
+        Record storage incumbent = _records[incumbentRecordId];
+        require(
+            candidate.categoryId == incumbent.categoryId && candidate.divisionId == incumbent.divisionId,
+            "different board"
+        );
+        return _recordOutranks(candidateRecordId, incumbentRecordId);
     }
 
     function votingPower(uint256 stake) public pure returns (uint256) {
         return stake / POWER_UNIT;
     }
 
-    function requiredStake(uint256 gameId, uint256 gameMode, uint256 score) public view returns (uint256 s) {
-        uint256 n = tierThresholds.length;
-        s = tierStakes[n];
-        for (uint256 i = 0; i < n; i++) {
-            if (score < tierThresholds[i]) {
-                s = tierStakes[i];
-                break;
-            }
+    function requiredStake(uint256 categoryId, uint256 divisionId, uint256 value) public view returns (uint256 s) {
+        (ICategoryRegistry.RankingDirection direction,,, uint256 baseStake) = categories.rankingConfig(categoryId);
+        s = baseStake;
+        uint256 currentBest = bestRecordId[categoryId][divisionId];
+        if (currentBest == 0 || _isBetterValue(direction, value, _records[currentBest].value)) {
+            s = (s * params.leaderMultiplierBps) / 10000;
         }
-        if (score > verifiedTop[gameId][gameMode]) s = (s * params.recordBreakerBps) / 10000;
     }
 
-    function requiredPayment(uint256 gameId, uint256 gameMode, uint256 score) external view returns (uint256) {
-        return params.submissionFee + requiredStake(gameId, gameMode, score);
+    function requiredPayment(uint256 categoryId, uint256 divisionId, uint256 value) external view returns (uint256) {
+        return params.submissionFee + requiredStake(categoryId, divisionId, value);
     }
 
     function hashVote(uint256 challengeId, uint8 round, Choice choice, bytes32 salt, address voter)
@@ -344,19 +376,19 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
     // ----------------------------------------------------------- RecordRegistry
 
     function submitRecord(
-        uint256 gameId,
-        uint256 gameMode,
-        uint256 score,
+        uint256 categoryId,
+        uint256 divisionId,
+        uint256 value,
         bytes32 evidenceHash,
         string calldata evidenceURI
     ) external payable nonReentrant returns (uint256 recordId) {
-        require(score > 0, "zero score");
+        require(value > 0, "zero value");
         require(evidenceHash != bytes32(0) && bytes(evidenceURI).length > 0, "evidence required");
-        require(games.isModeActive(gameId, gameMode), "mode inactive");
+        require(categories.isDivisionActive(categoryId, divisionId), "division inactive");
         require(!evidenceUsed[evidenceHash], "evidence already used");
         evidenceUsed[evidenceHash] = true;
 
-        uint256 stake = requiredStake(gameId, gameMode, score);
+        uint256 stake = requiredStake(categoryId, divisionId, value);
         uint256 fee = params.submissionFee;
         require(msg.value >= fee + stake, "insufficient payment");
         if (msg.value > fee + stake) claimable[msg.sender] += msg.value - fee - stake;
@@ -365,18 +397,20 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
         recordId = ++recordCount;
         Record storage r = _records[recordId];
         r.player = msg.sender;
-        r.gameId = gameId;
-        r.gameMode = gameMode;
-        r.score = score;
+        r.categoryId = categoryId;
+        r.divisionId = divisionId;
+        r.value = value;
+        (r.direction,, r.ruleVersion,) = categories.rankingConfig(categoryId);
         r.evidenceHash = evidenceHash;
         r.evidenceURI = evidenceURI;
         r.stake = stake;
         r.submittedAt = uint64(block.timestamp);
         r.deadline = uint64(block.timestamp) + params.challengeWindow;
-        (r.gameVersion, r.ruleVersion) = games.versions(gameId);
         r.status = RecordStatus.Provisional;
 
-        emit RecordSubmitted(recordId, msg.sender, gameId, gameMode, score, stake, evidenceHash, evidenceURI, r.deadline);
+        emit RecordSubmitted(
+            recordId, msg.sender, categoryId, divisionId, value, stake, evidenceHash, evidenceURI, r.deadline
+        );
     }
 
     /// @notice Anyone may call once the window is over and no challenge is open: auto-verify + refund.
@@ -390,7 +424,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
 
     // -------------------------------------------------------- ChallengeManager
 
-    function challengeRecord(uint256 recordId, uint256 cheatId, bytes32 evidenceHash, string calldata evidenceURI)
+    function challengeRecord(uint256 recordId, uint256 reasonId, bytes32 evidenceHash, string calldata evidenceURI)
         external
         payable
         nonReentrant
@@ -398,16 +432,16 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
     {
         Record storage rec = _records[recordId];
         require(rec.status == RecordStatus.Provisional || rec.status == RecordStatus.Verified, "not challengeable");
-        require(cheats.isRegistered(cheatId), "unknown cheat");
+        require(reasons.isRegistered(reasonId), "unknown reason");
         require(msg.sender != rec.player, "own record");
         require(evidenceHash != bytes32(0) && bytes(evidenceURI).length > 0, "evidence required");
         require(!challengeEvidenceUsed[evidenceHash], "evidence already used");
         challengeEvidenceUsed[evidenceHash] = true;
 
-        uint256 existing = challengeOf[recordId][cheatId];
+        uint256 existing = challengeOf[recordId][reasonId];
         require(existing == 0 || _challenges[existing].status == ChallengeStatus.Inconclusive, "duplicate challenge");
 
-        bool special;
+        bool special = false;
         if (rec.status == RecordStatus.Verified) {
             special = true;
         } else if (block.timestamp > rec.deadline && rec.activeChallenges == 0) {
@@ -423,7 +457,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
         challengeId = ++challengeCount;
         Challenge storage c = _challenges[challengeId];
         c.recordId = recordId;
-        c.cheatId = cheatId;
+        c.reasonId = reasonId;
         c.challenger = msg.sender;
         c.bond = bond;
         c.evidenceHash = evidenceHash;
@@ -438,14 +472,16 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
             reservedPool += p.specialReward;
             c.reserved = p.specialReward;
         }
-        challengeOf[recordId][cheatId] = challengeId;
+        challengeOf[recordId][reasonId] = challengeId;
         rec.activeChallenges++;
 
         Round storage r = rounds[challengeId][0];
         r.commitEnd = uint64(block.timestamp) + p.commitPeriod;
         r.revealEnd = r.commitEnd + p.revealPeriod;
 
-        emit ChallengeCreated(recordId, cheatId, msg.sender, challengeId, bond, special, evidenceHash, evidenceURI, r.commitEnd);
+        emit ChallengeCreated(
+            recordId, reasonId, msg.sender, challengeId, bond, special, evidenceHash, evidenceURI, r.commitEnd
+        );
     }
 
     /// @notice Challenger or player adds evidence while the current round is still accepting commits.
@@ -456,7 +492,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
         require(block.timestamp < rounds[challengeId][c.round].commitEnd, "commit phase over");
         require(evidenceHash != bytes32(0) && bytes(evidenceURI).length > 0, "evidence required");
         c.evidenceCount++;
-        emit EvidenceSubmitted(c.recordId, c.cheatId, msg.sender, challengeId, c.round, evidenceHash, evidenceURI);
+        emit EvidenceSubmitted(c.recordId, c.reasonId, msg.sender, challengeId, c.round, evidenceHash, evidenceURI);
     }
 
     // ------------------------------------------------------------ VotingManager
@@ -476,7 +512,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
         v.stake = msg.value;
         r.committedStake += msg.value;
         r.committedVoters++;
-        emit VoteCommitted(c.recordId, c.cheatId, msg.sender, challengeId, c.round, msg.value);
+        emit VoteCommitted(c.recordId, c.reasonId, msg.sender, challengeId, c.round, msg.value);
     }
 
     function revealVote(uint256 challengeId, Choice choice, bytes32 salt) external {
@@ -501,7 +537,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
             r.denyStake += v.stake;
         }
         r.revealedVoters++;
-        emit VoteRevealed(c.recordId, c.cheatId, msg.sender, challengeId, c.round, choice, power);
+        emit VoteRevealed(c.recordId, c.reasonId, msg.sender, challengeId, c.round, choice, power);
     }
 
     function finalizeVoting(uint256 challengeId) external nonReentrant {
@@ -530,7 +566,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
                     c.extended = true;
                     r.commitEnd = r.revealEnd + p.extensionPeriod;
                     r.revealEnd = r.commitEnd + p.revealPeriod;
-                    emit VotingExtended(c.recordId, c.cheatId, challengeId, r.commitEnd, r.revealEnd);
+                    emit VotingExtended(c.recordId, c.reasonId, challengeId, r.commitEnd, r.revealEnd);
                 } else if (quorum) {
                     // still ~50:50 after the extension => Evidence Sufficiency Voting
                     _finalizeRound(challengeId, 0, Choice.None);
@@ -539,7 +575,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
                     Round storage e = rounds[challengeId][1];
                     e.commitEnd = uint64(block.timestamp) + p.commitPeriod;
                     e.revealEnd = e.commitEnd + p.revealPeriod;
-                    emit EvidenceVotingStarted(c.recordId, c.cheatId, challengeId, e.commitEnd, e.revealEnd);
+                    emit EvidenceVotingStarted(c.recordId, c.reasonId, challengeId, e.commitEnd, e.revealEnd);
                 } else {
                     _finalizeRound(challengeId, 0, Choice.None);
                     _resolve(challengeId, ChallengeStatus.Inconclusive);
@@ -550,7 +586,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
                 _resolve(challengeId, ChallengeStatus.Inconclusive);
             }
         } else {
-            // Evidence Sufficient >= approval => cheating established. Anything else => Inconclusive
+            // Evidence Sufficient >= approval => invalid submission established. Otherwise Inconclusive.
             // ("evidence required": challenger may re-challenge with new evidence).
             if (confirmWins) {
                 _finalizeRound(challengeId, 1, Choice.Confirm);
@@ -580,15 +616,15 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
             if (r.winner != Choice.None) {
                 uint256 reward = (r.rewardPool * votingPower(stake)) / r.winnerPower;
                 payout += reward;
-                emit RewardDistributed(c.recordId, c.cheatId, msg.sender, reward, RewardKind.VoterReward, challengeId);
+                emit RewardDistributed(c.recordId, c.reasonId, msg.sender, reward, RewardKind.VoterReward, challengeId);
             }
         } else {
             // unrevealed votes, or revealed votes on the losing side: partial slash
             payout = stake - slash;
-            emit StakeSlashed(c.recordId, c.cheatId, msg.sender, slash, SlashKind.VoterStake, challengeId);
+            emit StakeSlashed(c.recordId, c.reasonId, msg.sender, slash, SlashKind.VoterStake, challengeId);
         }
         claimable[msg.sender] += payout;
-        emit StakeReturned(c.recordId, c.cheatId, msg.sender, payout, StakeKind.VoterStake);
+        emit StakeReturned(c.recordId, c.reasonId, msg.sender, payout, StakeKind.VoterStake);
     }
 
     // ------------------------------------------------------- RewardDistributor
@@ -612,13 +648,13 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
 
     function _verify(uint256 recordId, Record storage rec) internal {
         rec.status = RecordStatus.Verified;
-        if (rec.score > verifiedTop[rec.gameId][rec.gameMode]) verifiedTop[rec.gameId][rec.gameMode] = rec.score;
+        _pushLeaderboard(recordId);
         if (!rec.stakeSettled) {
             rec.stakeSettled = true;
             claimable[rec.player] += rec.stake;
             emit StakeReturned(recordId, 0, rec.player, rec.stake, StakeKind.PlayerStake);
         }
-        emit RecordVerified(recordId, rec.player, rec.gameId, rec.score);
+        emit RecordVerified(recordId, rec.player, rec.categoryId, rec.value);
     }
 
     function _finalizeRound(uint256 challengeId, uint8 round, Choice winner) internal {
@@ -644,13 +680,13 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
         Params storage p = params;
         c.status = outcome;
         rec.activeChallenges--;
-        emit VotingFinalized(c.recordId, c.cheatId, challengeId, outcome, c.round, r.confirmPower, r.denyPower);
+        emit VotingFinalized(c.recordId, c.reasonId, challengeId, outcome, c.round, r.confirmPower, r.denyPower);
 
         if (outcome == ChallengeStatus.Confirmed) {
             claimable[c.challenger] += c.bond;
-            emit StakeReturned(c.recordId, c.cheatId, c.challenger, c.bond, StakeKind.ChallengeBond);
+            emit StakeReturned(c.recordId, c.reasonId, c.challenger, c.bond, StakeKind.ChallengeBond);
 
-            uint256 pot;
+            uint256 pot = 0;
             if (c.special) {
                 pot = c.reserved; // funded from the pool, not from the player's refunded stake
                 reservedPool -= pot;
@@ -659,7 +695,7 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
             } else if (!rec.stakeSettled) {
                 rec.stakeSettled = true;
                 pot = rec.stake;
-                emit StakeSlashed(c.recordId, c.cheatId, rec.player, pot, SlashKind.PlayerStake, challengeId);
+                emit StakeSlashed(c.recordId, c.reasonId, rec.player, pot, SlashKind.PlayerStake, challengeId);
             }
             if (pot > 0) {
                 uint256 toChallenger = (pot * p.challengerRewardBps) / 10000;
@@ -668,23 +704,26 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
                 r.rewardPool += toVoters;
                 poolBalance += pot - toChallenger - toVoters;
                 emit RewardDistributed(
-                    c.recordId, c.cheatId, c.challenger, toChallenger, RewardKind.ChallengerReward, challengeId
+                    c.recordId, c.reasonId, c.challenger, toChallenger, RewardKind.ChallengerReward, challengeId
                 );
             }
             if (rec.status != RecordStatus.Revoked) {
                 rec.status = RecordStatus.Revoked; // NFT (if any) is kept and reads this status
-                emit RecordRevoked(c.recordId, rec.player, c.cheatId, challengeId);
+                _pruneLeaderboard(rec.categoryId, rec.divisionId);
+                emit RecordRevoked(c.recordId, rec.player, c.reasonId, challengeId);
             }
         } else {
             if (outcome == ChallengeStatus.Denied) {
                 uint256 comp = (c.bond * p.playerCompBps) / 10000;
                 claimable[rec.player] += comp;
                 r.rewardPool += c.bond - comp; // winners = deny voters
-                emit StakeSlashed(c.recordId, c.cheatId, c.challenger, c.bond, SlashKind.ChallengeBond, challengeId);
-                emit RewardDistributed(c.recordId, c.cheatId, rec.player, comp, RewardKind.PlayerCompensation, challengeId);
+                emit StakeSlashed(c.recordId, c.reasonId, c.challenger, c.bond, SlashKind.ChallengeBond, challengeId);
+                emit RewardDistributed(
+                    c.recordId, c.reasonId, rec.player, comp, RewardKind.PlayerCompensation, challengeId
+                );
             } else {
                 claimable[c.challenger] += c.bond;
-                emit StakeReturned(c.recordId, c.cheatId, c.challenger, c.bond, StakeKind.ChallengeBond);
+                emit StakeReturned(c.recordId, c.reasonId, c.challenger, c.bond, StakeKind.ChallengeBond);
             }
             if (c.special) {
                 reservedPool -= c.reserved;
@@ -699,5 +738,71 @@ contract RunProofCore is IRunProofCore, Ownable, ReentrancyGuard {
     receive() external payable {
         poolBalance += msg.value;
         emit PoolFunded(msg.sender, msg.value);
+    }
+
+    function _boardKey(uint256 categoryId, uint256 divisionId) internal pure returns (bytes32) {
+        return keccak256(abi.encode(categoryId, divisionId));
+    }
+
+    function _isBetterValue(ICategoryRegistry.RankingDirection direction, uint256 candidate, uint256 incumbent)
+        internal
+        pure
+        returns (bool)
+    {
+        if (direction == ICategoryRegistry.RankingDirection.HigherIsBetter) return candidate > incumbent;
+        return candidate < incumbent;
+    }
+
+    function _recordOutranks(uint256 candidateId, uint256 incumbentId) internal view returns (bool) {
+        Record storage candidate = _records[candidateId];
+        Record storage incumbent = _records[incumbentId];
+        if (candidate.value != incumbent.value) {
+            return _isBetterValue(candidate.direction, candidate.value, incumbent.value);
+        }
+        if (candidate.submittedAt != incumbent.submittedAt) return candidate.submittedAt < incumbent.submittedAt;
+        return candidateId < incumbentId;
+    }
+
+    function _pushLeaderboard(uint256 recordId) internal {
+        Record storage rec = _records[recordId];
+        bytes32 key = _boardKey(rec.categoryId, rec.divisionId);
+        uint256[] storage heap = _boardHeaps[key];
+        if (heap.length == 0) heap.push(0);
+        heap.push(recordId);
+        uint256 index = heap.length - 1;
+        while (index > 1) {
+            uint256 parent = index / 2;
+            if (!_recordOutranks(heap[index], heap[parent])) break;
+            (heap[index], heap[parent]) = (heap[parent], heap[index]);
+            index = parent;
+        }
+        bestRecordId[rec.categoryId][rec.divisionId] = heap[1];
+        Record storage best = _records[heap[1]];
+        emit LeaderboardUpdated(rec.categoryId, rec.divisionId, heap[1], best.value);
+    }
+
+    function _pruneLeaderboard(uint256 categoryId, uint256 divisionId) internal {
+        bytes32 key = _boardKey(categoryId, divisionId);
+        uint256[] storage heap = _boardHeaps[key];
+        while (heap.length > 1 && _records[heap[1]].status != RecordStatus.Verified) {
+            uint256 last = heap[heap.length - 1];
+            heap.pop();
+            if (heap.length == 1) break;
+            heap[1] = last;
+            uint256 index = 1;
+            while (true) {
+                uint256 left = index * 2;
+                if (left >= heap.length) break;
+                uint256 right = left + 1;
+                uint256 bestChild = left;
+                if (right < heap.length && _recordOutranks(heap[right], heap[left])) bestChild = right;
+                if (!_recordOutranks(heap[bestChild], heap[index])) break;
+                (heap[index], heap[bestChild]) = (heap[bestChild], heap[index]);
+                index = bestChild;
+            }
+        }
+        uint256 nextBest = heap.length > 1 ? heap[1] : 0;
+        bestRecordId[categoryId][divisionId] = nextBest;
+        emit LeaderboardUpdated(categoryId, divisionId, nextBest, nextBest == 0 ? 0 : _records[nextBest].value);
     }
 }

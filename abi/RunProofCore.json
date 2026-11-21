@@ -8,14 +8,14 @@
         "internalType": "address"
       },
       {
-        "name": "games_",
+        "name": "categories_",
         "type": "address",
-        "internalType": "contract IGameRegistry"
+        "internalType": "contract ICategoryRegistry"
       },
       {
-        "name": "cheats_",
+        "name": "reasons_",
         "type": "address",
-        "internalType": "contract ICheatRegistry"
+        "internalType": "contract IChallengeReasonRegistry"
       }
     ],
     "stateMutability": "nonpayable"
@@ -33,6 +33,43 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "bestRecordId",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "categories",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract ICategoryRegistry"
       }
     ],
     "stateMutability": "view"
@@ -103,7 +140,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -126,19 +163,6 @@
       }
     ],
     "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "cheats",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract ICheatRegistry"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -249,19 +273,6 @@
   },
   {
     "type": "function",
-    "name": "games",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IGameRegistry"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getChallenge",
     "inputs": [
       {
@@ -282,7 +293,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "cheatId",
+            "name": "reasonId",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -368,19 +379,24 @@
             "internalType": "address"
           },
           {
-            "name": "gameId",
+            "name": "categoryId",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "gameMode",
+            "name": "divisionId",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "score",
+            "name": "value",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "direction",
+            "type": "uint8",
+            "internalType": "enum ICategoryRegistry.RankingDirection"
           },
           {
             "name": "evidenceHash",
@@ -406,11 +422,6 @@
             "name": "deadline",
             "type": "uint64",
             "internalType": "uint64"
-          },
-          {
-            "name": "gameVersion",
-            "type": "uint32",
-            "internalType": "uint32"
           },
           {
             "name": "ruleVersion",
@@ -478,6 +489,30 @@
   },
   {
     "type": "function",
+    "name": "outranks",
+    "inputs": [
+      {
+        "name": "candidateRecordId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "incumbentRecordId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "owner",
     "inputs": [],
     "outputs": [
@@ -530,7 +565,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "recordBreakerBps",
+        "name": "leaderMultiplierBps",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -607,6 +642,19 @@
   },
   {
     "type": "function",
+    "name": "reasons",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IChallengeReasonRegistry"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "recordCount",
     "inputs": [],
     "outputs": [
@@ -674,17 +722,17 @@
     "name": "requiredPayment",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "gameMode",
+        "name": "divisionId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "score",
+        "name": "value",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -703,17 +751,17 @@
     "name": "requiredStake",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "gameMode",
+        "name": "divisionId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "score",
+        "name": "value",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -897,7 +945,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "recordBreakerBps",
+            "name": "leaderMultiplierBps",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -964,24 +1012,6 @@
   },
   {
     "type": "function",
-    "name": "setStakeTiers",
-    "inputs": [
-      {
-        "name": "thresholds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "stakes",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "submitEvidence",
     "inputs": [
       {
@@ -1008,17 +1038,17 @@
     "name": "submitRecord",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "gameMode",
+        "name": "divisionId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "score",
+        "name": "value",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -1044,44 +1074,6 @@
   },
   {
     "type": "function",
-    "name": "tierStakes",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tierThresholds",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -1092,30 +1084,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "verifiedTop",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1221,7 +1189,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -1282,7 +1250,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -1331,7 +1299,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -1353,6 +1321,37 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LeaderboardUpdated",
+    "inputs": [
+      {
+        "name": "categoryId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "divisionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "bestRecordId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "bestValue",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1437,7 +1436,7 @@
         "internalType": "address"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -1468,19 +1467,19 @@
         "internalType": "address"
       },
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "gameMode",
+        "name": "divisionId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "score",
+        "name": "value",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1529,13 +1528,13 @@
         "internalType": "address"
       },
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "score",
+        "name": "value",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1554,7 +1553,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -1597,7 +1596,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -1634,7 +1633,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -1677,7 +1676,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -1720,7 +1719,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -1769,7 +1768,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -1806,7 +1805,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "cheatId",
+        "name": "reasonId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"

@@ -2,8 +2,9 @@
 pragma solidity ^0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
-import {GameRegistry} from "../src/GameRegistry.sol";
-import {CheatRegistry} from "../src/CheatRegistry.sol";
+import {CategoryRegistry} from "../src/CategoryRegistry.sol";
+import {ICategoryRegistry} from "../src/interfaces/ICategoryRegistry.sol";
+import {ChallengeReasonRegistry} from "../src/ChallengeReasonRegistry.sol";
 import {RunProofCore} from "../src/RunProofCore.sol";
 import {IRunProofCore} from "../src/interfaces/IRunProofCore.sol";
 
@@ -35,22 +36,23 @@ contract Handler is Test {
         return keccak256(abi.encode(a, cid, round));
     }
 
-    function submit(uint256 who, uint256 score, uint256 mode, uint256 extra) external {
+    function submit(uint256 who, uint256 value, uint256 mode, uint256 extra) external {
         address p = _a(who);
-        score = bound(score, 1, 3_000_000);
+        value = bound(value, 1, 3_000_000);
         mode = bound(mode, 1, 3);
-        uint256 pay = core.requiredPayment(1, mode, score) + bound(extra, 0, 1 ether);
+        uint256 pay = core.requiredPayment(1, mode, value) + bound(extra, 0, 1 ether);
         vm.prank(p);
-        try core.submitRecord{value: pay}(1, mode, score, keccak256(abi.encode(++nonce)), "ipfs://x") {} catch {}
+        try core.submitRecord{value: pay}(1, mode, value, keccak256(abi.encode(++nonce)), "ipfs://x") {} catch {}
     }
 
-    function challenge(uint256 who, uint256 rid, uint256 cheat) external {
+    function challenge(uint256 who, uint256 rid, uint256 category) external {
         uint256 n = core.recordCount();
         if (n == 0) return;
         rid = bound(rid, 1, n);
-        cheat = bound(cheat, 1, 5);
+        category = bound(category, 1, 5);
         vm.prank(_a(who));
-        try core.challengeRecord{value: 0.6 ether}(rid, cheat, keccak256(abi.encode(++nonce)), "ipfs://c") {} catch {}
+        try core.challengeRecord{value: 0.6 ether}(rid, category, keccak256(abi.encode(++nonce)), "ipfs://c") {}
+            catch {}
     }
 
     function commit(uint256 who, uint256 cid, uint256 choice, uint256 stake) external {
@@ -157,9 +159,21 @@ contract RunProofInvariantTest is Test {
 
     function setUp() public {
         address owner = address(0xBEEF);
-        GameRegistry games = new GameRegistry(owner);
-        CheatRegistry cheats = new CheatRegistry(owner);
-        core = new RunProofCore(owner, games, cheats);
+        CategoryRegistry categories = new CategoryRegistry(address(this));
+        uint256 categoryId = categories.createCategory(
+            "Invariant Score",
+            "ipfs://rules",
+            "points",
+            0,
+            ICategoryRegistry.RankingDirection.HigherIsBetter,
+            1,
+            0.05 ether
+        );
+        categories.addDivision(categoryId, "Open");
+        categories.addDivision(categoryId, "Women");
+        categories.addDivision(categoryId, "Men");
+        ChallengeReasonRegistry reasons = new ChallengeReasonRegistry(address(this));
+        core = new RunProofCore(owner, categories, reasons);
         vm.deal(address(this), 1000 ether);
         core.fundPool{value: 50 ether}();
         handler = new Handler(core);

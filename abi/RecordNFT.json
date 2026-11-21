@@ -402,13 +402,13 @@
         "internalType": "address"
       },
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "score",
+        "name": "value",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

@@ -2,8 +2,9 @@
 pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
-import {GameRegistry} from "../src/GameRegistry.sol";
-import {CheatRegistry} from "../src/CheatRegistry.sol";
+import {CategoryRegistry} from "../src/CategoryRegistry.sol";
+import {ICategoryRegistry} from "../src/interfaces/ICategoryRegistry.sol";
+import {ChallengeReasonRegistry} from "../src/ChallengeReasonRegistry.sol";
 import {RunProofCore} from "../src/RunProofCore.sol";
 import {RecordNFT} from "../src/RecordNFT.sol";
 
@@ -18,10 +19,43 @@ contract Deploy is Script {
         bool demo = vm.envOr("DEMO_PERIODS", uint256(0)) == 1;
 
         vm.startBroadcast(pk);
-        GameRegistry games = new GameRegistry(deployer);
-        CheatRegistry cheats = new CheatRegistry(deployer);
-        RunProofCore core = new RunProofCore(deployer, games, cheats);
+        CategoryRegistry categories = new CategoryRegistry(deployer);
+        ChallengeReasonRegistry reasons = new ChallengeReasonRegistry(deployer);
+        RunProofCore core = new RunProofCore(deployer, categories, reasons);
         RecordNFT nft = new RecordNFT(core);
+
+        uint256 sprint = categories.createCategory(
+            "100m Sprint",
+            "ipfs://runproof-rules/100m-sprint-v1",
+            "ms",
+            0,
+            ICategoryRegistry.RankingDirection.LowerIsBetter,
+            1,
+            0.05 ether
+        );
+        categories.addDivision(sprint, "Open");
+        uint256 pullUps = categories.createCategory(
+            "Pull-ups",
+            "ipfs://runproof-rules/pull-ups-v1",
+            "reps",
+            0,
+            ICategoryRegistry.RankingDirection.HigherIsBetter,
+            1,
+            0.05 ether
+        );
+        categories.addDivision(pullUps, "Open");
+        uint256 tetris = categories.createCategory(
+            "Tetris Score",
+            "ipfs://runproof-rules/tetris-v1",
+            "points",
+            0,
+            ICategoryRegistry.RankingDirection.HigherIsBetter,
+            1,
+            0.05 ether
+        );
+        categories.addDivision(tetris, "Classic");
+        categories.addDivision(tetris, "Sprint");
+        categories.addDivision(tetris, "Marathon");
 
         if (demo) {
             // short windows so the full loop can be shown live; production keeps 30d / 3d+1d
@@ -53,8 +87,8 @@ contract Deploy is Script {
 
         console.log("chainid        ", block.chainid);
         console.log("deployer       ", deployer);
-        console.log("GameRegistry   ", address(games));
-        console.log("CheatRegistry  ", address(cheats));
+        console.log("CategoryRegistry", address(categories));
+        console.log("ReasonRegistry  ", address(reasons));
         console.log("RunProofCore   ", address(core));
         console.log("RecordNFT      ", address(nft));
     }

@@ -1,222 +1,275 @@
-# RunProof 合约对接文档（前端 / 后端）
+# RunProof V2 对接文档（前端 / 后端）
 
-> 由 `abi/*.json` 自动生成函数与事件签名，以 ABI 为准。ABI 重新生成：`script/exportAbi.sh`。
+> V2 是通用成绩排名协议，不限定游戏。公开函数和事件的最终签名以 `abi/*.json` 为准。
 
-## 网络与地址
+## 当前部署状态
 
-- Monad Testnet，Chain ID `10143`，RPC `https://testnet-rpc.monad.xyz`，原生币 MON
-- 当前部署为**演示参数**：挑战期 10 分钟、Commit 2 分钟、Reveal 2 分钟、延期 2 分钟。正式参数（30 天 / 3 天 / 1 天 / 2 天）需要重新部署，**重新部署后地址会变**。
+- 网络：Monad Testnet
+- Chain ID：`10143`
+- RPC：`https://testnet-rpc.monad.xyz`
+- 原生资产：MON
+- V2：**尚未部署**，不得把 V1 地址与 V2 ABI 混用
+- V1 历史地址：仅保存在 `deployments/monad-testnet-v1.json`
+- V2 部署后地址：写入 `deployments/monad-testnet-v2.json`
 
-| 合约 | 地址 | ABI |
-|---|---|---|
-| RunProofCore | `0x606717FC7055B81C4290b34F9cA1E8123416b0Ab` | `abi/RunProofCore.json` |
-| CheatRegistry | `0xc0df0A2342557D42D35F34913EDB28E0792Ff400` | `abi/CheatRegistry.json` |
-| GameRegistry | `0x9906867e359F1C7d609f89f39beD4b15023601B0` | `abi/GameRegistry.json` |
-| RecordNFT | `0x2bFb2e522e51A458b6317343ea6Ef8A5E454c6EE` | `abi/RecordNFT.json` |
+## 数据约定
 
-## 枚举（数值即链上返回值）
+- TypeScript 中所有 `uint*` 均使用 `bigint`；不要把成绩或金额转换成 `number`。
+- MON 金额均为 wei。展示用 `formatEther`，输入用 `parseEther`。
+- `uint64` 时间是 Unix 秒：`new Date(Number(timestamp) * 1000)`。
+- `value` 是按分类精度归一化后的非零整数。例如 10.253 秒可使用单位 `ms`、精度 0、值 `10253`。
+- `evidenceHash` 推荐对原始文件字节做 `keccak256`；`evidenceURI` 保存 IPFS 或对象存储 URI。
+- 写交易返回的 ID 从事件解析，不从交易回执的函数返回值读取。
+
+## 分类与排序
+
+`CategoryRegistry.getCategory(categoryId)` 返回：
+
+| 字段 | 含义 |
+|---|---|
+| `name` | 分类名称 |
+| `descriptionURI` | 规则和说明地址 |
+| `unit` | 单位，如 `ms`、`reps`、`points` |
+| `decimals` | 展示精度 |
+| `direction` | 0=None，1=HigherIsBetter，2=LowerIsBetter |
+| `ruleVersion` | 当前规则版本 |
+| `baseStake` | 基础提交质押（wei） |
+| `active` | 分类是否开放 |
+
+分类下还有一个或多个 division。提交前必须确认：
+
+```text
+CategoryRegistry.isDivisionActive(categoryId, divisionId) == true
+```
+
+排名规则：
+
+1. 只把 `RecordStatus.Verified` 放入正式榜单。
+2. 按分类的 `direction` 比较 `value`。
+3. 值相等时，`submittedAt` 更早者优先。
+4. 时间仍相等时，`recordId` 更小者优先。
+5. `bestRecordId(categoryId, divisionId)` 是链上权威榜首。
+6. 完整榜单由事件索引器生成；撤销记录必须立即从榜单移除。
+
+排名方向、单位和精度创建后不可修改，避免历史成绩语义改变。规则内容变化应增加
+`ruleVersion`，成绩会保存提交时的版本。
+
+## 枚举
 
 - `RecordStatus`：0 None，1 Provisional，2 Verified，3 Revoked
 - `ChallengeStatus`：0 None，1 Voting，2 EvidenceVoting，3 Confirmed，4 Denied，5 Inconclusive
-- `Choice`：0 None，1 Confirm，2 Deny。证据充分性轮（round=1）中：1 = Evidence Sufficient，2 = Evidence Required
-- `StakeKind`：0 PlayerStake，1 ChallengeBond，2 VoterStake；`SlashKind` 同序；`RewardKind`：0 ChallengerReward，1 PlayerCompensation，2 VoterReward
-- Cheat ID 是数字：1=C001 Automated Input，2=C002 RNG Manipulation，3=C003 Memory Modification，4=C004 Replay Injection，5=C005 Modified Game Files。`CheatRegistry.getCheat(id).code` 取字符串编号
-- Game：gameId=1 Tetris；modeId 1 Classic，2 Sprint，3 Marathon
+- `Choice`：0 None，1 Confirm，2 Deny
+- Evidence Sufficiency 轮：1=Evidence Sufficient，2=Evidence Required
+- `RankingDirection`：0 None，1 HigherIsBetter，2 LowerIsBetter
+- `StakeKind` / `SlashKind`：0 PlayerStake，1 ChallengeBond，2 VoterStake
+- `RewardKind`：0 ChallengerReward，1 PlayerCompensation，2 VoterReward
+- `ProposalStatus`：0 None，1 Voting，2 Approved，3 Rejected，4 Inconclusive
 
-## 关键流程与注意事项
+## 核心结构
 
-1. **提交成绩前**先调 `requiredPayment(gameId, mode, score)`，把返回值作为 `msg.value`。多付的部分会进入 `claimable`，可提取。
-2. **所有资金返还/奖励都不是自动转账**，而是记入 `claimable[地址]`，用户需调用 `withdraw()` 提取。前端要展示 `claimable` 并提供提取按钮。
-3. **投票是两步**：`commitVote(challengeId, hash)`（附带质押 MON，0.05–5 MON）→ 到 `commitEnd` 后 `revealVote(challengeId, choice, salt)`。hash 必须用链上视图 `hashVote(challengeId, round, choice, salt, voter)` 计算，`round` 取 `getChallenge(id).round`。**salt 由前端本地保存**，丢了就无法揭示，会被罚没部分质押。
-4. 窗口到期后，**任何人**可调用：`finalizeRecord`（无挑战且超过挑战期）、`finalizeVoting`（Reveal 结束后）。前端可以提供按钮或由后端定时触发。
-5. 投票结算：`finalizeVoting` 之后，每个投票者对每个 round 各调一次 `claimVote(challengeId, round)`，再 `withdraw()`。
-6. NFT：`RecordNFT.mint(recordId)` 仅 Verified 的成绩可铸，铸给玩家，tokenId == recordId。认证状态用 `verificationStatus(tokenId)`，**不要缓存**，撤销后 NFT 仍在，状态变 Revoked。
-7. 挑战 30 天后的成绩仍可挑战（特殊挑战）：保证金 ×5，需要新的证据哈希。奖励池余额不足会 revert `pool cannot fund reward`。
-8. 同一 (recordId, cheatId) 只能有一个有效挑战；上一个结果为 Inconclusive 时可用**新证据哈希**重新挑战。同一证据哈希不能重复使用。
-9. 常见 revert 文案：`window open`、`open challenges`、`duplicate challenge`、`evidence already used`、`stake out of range`、`commitment mismatch`、`not reveal phase`、`commit phase over`。
+`RunProofCore.getRecord(recordId)`：
 
-## RunProofCore 函数
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `player` | address | 提交者 |
+| `categoryId` / `divisionId` | uint256 | 所属榜单 |
+| `value` | uint256 | 归一化成绩 |
+| `direction` | uint8 | 提交时固化的排序方向 |
+| `evidenceHash` / `evidenceURI` | bytes32 / string | 证明材料 |
+| `stake` | uint256 | 提交质押 |
+| `submittedAt` / `deadline` | uint64 | 提交和普通挑战截止时间 |
+| `ruleVersion` | uint32 | 提交时规则版本 |
+| `status` | uint8 | `RecordStatus` |
+| `stakeSettled` | bool | 提交质押是否已结算 |
+| `activeChallenges` | uint32 | 当前进行中的挑战数 |
 
-**写入：**
+`RunProofCore.getChallenge(challengeId)`：
 
-- `challengeRecord(uint256 recordId,uint256 cheatId,bytes32 evidenceHash,string evidenceURI)` → uint256 **payable**
-- `claimVote(uint256 challengeId,uint8 round)`
-- `commitVote(uint256 challengeId,bytes32 commitment)` **payable**
-- `finalizeRecord(uint256 recordId)`
-- `finalizeVoting(uint256 challengeId)`
-- `fundPool()` **payable**
-- `renounceOwnership()`
-- `revealVote(uint256 challengeId,uint8 choice,bytes32 salt)`
-- `setParams((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16,uint16,uint16) p)`
-- `setStakeTiers(uint256[] thresholds,uint256[] stakes)`
-- `submitEvidence(uint256 challengeId,bytes32 evidenceHash,string evidenceURI)`
-- `submitRecord(uint256 gameId,uint256 gameMode,uint256 score,bytes32 evidenceHash,string evidenceURI)` → uint256 **payable**
-- `transferOwnership(address newOwner)`
-- `withdraw()`
-- `withdrawPool(address to,uint256 amount)`
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `recordId` / `reasonId` | uint256 | 被挑战成绩和原因 |
+| `challenger` | address | 挑战者 |
+| `bond` / `reserved` | uint256 | 保证金和特殊挑战预留奖励 |
+| `evidenceHash` / `evidenceURI` | bytes32 / string | 挑战证据 |
+| `createdAt` | uint64 | 创建时间 |
+| `status` | uint8 | `ChallengeStatus` |
+| `round` | uint8 | 0=有效性判断，1=证据充分性 |
+| `special` / `extended` | bool | 特殊挑战 / 已延期 |
+| `evidenceCount` | uint32 | 证据数量 |
 
-**只读：**
+## 用户流程
 
-- `POWER_UNIT()` → uint256
-- `challengeCount()` → uint256
-- `challengeEvidenceUsed(bytes32 )` → bool
-- `challengeOf(uint256 ,uint256 )` → uint256
-- `cheats()` → address
-- `claimable(address )` → uint256
-- `evidenceUsed(bytes32 )` → bool
-- `games()` → address
-- `getChallenge(uint256 challengeId)` → (uint256,uint256,address,uint256,uint256,bytes32,string,uint64,uint8,uint8,bool,bool,uint32)
-- `getRecord(uint256 recordId)` → (address,uint256,uint256,uint256,bytes32,string,uint256,uint64,uint64,uint32,uint32,uint8,bool,uint32)
-- `hashVote(uint256 challengeId,uint8 round,uint8 choice,bytes32 salt,address voter)` → bytes32
-- `owner()` → address
-- `params()` → uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32,uint64,uint64,uint64,uint64,uint16,uint16,uint16,uint16,uint16,uint16
-- `poolBalance()` → uint256
-- `recordCount()` → uint256
-- `recordSummary(uint256 recordId)` → address,uint256,uint256,uint256,bytes32,uint8
-- `requiredPayment(uint256 gameId,uint256 gameMode,uint256 score)` → uint256
-- `requiredStake(uint256 gameId,uint256 gameMode,uint256 score)` → uint256
-- `reservedPool()` → uint256
-- `rounds(uint256 ,uint8 )` → uint64,uint64,uint256,uint256,uint256,uint256,uint256,uint32,uint32,bool,uint8,uint256,uint256,uint16
-- `tierStakes(uint256 )` → uint256
-- `tierThresholds(uint256 )` → uint256
-- `verifiedTop(uint256 ,uint256 )` → uint256
-- `votes(uint256 ,uint8 ,address )` → bytes32,uint256,uint8,bool,bool
-- `votingPower(uint256 stake)` → uint256
+### 1. 提交成绩
 
-## RunProofCore 事件
+1. 上传证据并计算 `evidenceHash`。
+2. 调用 `requiredPayment(categoryId, divisionId, value)`。
+3. 用返回值作为 `msg.value` 调用 `submitRecord`。
+4. 从 `RecordSubmitted` 事件获取 `recordId`。
 
-- `ChallengeCreated(indexed uint256 recordId, indexed uint256 cheatId, indexed address challenger, uint256 challengeId, uint256 bond, bool special, bytes32 evidenceHash, string evidenceURI, uint64 commitEnd)`
-- `EvidenceSubmitted(indexed uint256 recordId, indexed uint256 cheatId, indexed address submitter, uint256 challengeId, uint8 round, bytes32 evidenceHash, string evidenceURI)`
-- `EvidenceVotingStarted(indexed uint256 recordId, indexed uint256 cheatId, uint256 challengeId, uint64 commitEnd, uint64 revealEnd)`
-- `OwnershipTransferred(indexed address previousOwner, indexed address newOwner)`
-- `ParamsUpdated()`
-- `PoolFunded(indexed address from, uint256 amount)`
-- `PoolWithdrawn(indexed address to, uint256 amount)`
-- `RecordRevoked(indexed uint256 recordId, indexed address player, indexed uint256 cheatId, uint256 challengeId)`
-- `RecordSubmitted(indexed uint256 recordId, indexed address player, indexed uint256 gameId, uint256 gameMode, uint256 score, uint256 stake, bytes32 evidenceHash, string evidenceURI, uint64 deadline)`
-- `RecordVerified(indexed uint256 recordId, indexed address player, indexed uint256 gameId, uint256 score)`
-- `RewardDistributed(indexed uint256 recordId, indexed uint256 cheatId, indexed address account, uint256 amount, uint8 kind, uint256 challengeId)`
-- `StakeReturned(indexed uint256 recordId, indexed uint256 cheatId, indexed address account, uint256 amount, uint8 kind)`
-- `StakeSlashed(indexed uint256 recordId, indexed uint256 cheatId, indexed address account, uint256 amount, uint8 kind, uint256 challengeId)`
-- `VoteCommitted(indexed uint256 recordId, indexed uint256 cheatId, indexed address voter, uint256 challengeId, uint8 round, uint256 stake)`
-- `VoteRevealed(indexed uint256 recordId, indexed uint256 cheatId, indexed address voter, uint256 challengeId, uint8 round, uint8 choice, uint256 power)`
-- `VotingExtended(indexed uint256 recordId, indexed uint256 cheatId, uint256 challengeId, uint64 newCommitEnd, uint64 newRevealEnd)`
-- `VotingFinalized(indexed uint256 recordId, indexed uint256 cheatId, uint256 challengeId, uint8 outcome, uint8 round, uint256 confirmPower, uint256 denyPower)`
-- `Withdrawn(indexed address account, uint256 amount)`
+```ts
+const payment = await publicClient.readContract({
+  address: CORE,
+  abi: coreAbi,
+  functionName: 'requiredPayment',
+  args: [categoryId, divisionId, value],
+})
 
-## RecordNFT 函数
+const hash = await walletClient.writeContract({
+  account,
+  address: CORE,
+  abi: coreAbi,
+  functionName: 'submitRecord',
+  args: [categoryId, divisionId, value, evidenceHash, evidenceURI],
+  value: payment,
+})
+```
 
-**写入：**
+基础质押来自分类配置。若成绩严格优于当前已验证榜首，则使用 `leaderMultiplierBps`。
 
-- `approve(address to,uint256 tokenId)`
-- `mint(uint256 recordId)` → uint256
-- `safeTransferFrom(address from,address to,uint256 tokenId)`
-- `safeTransferFrom(address from,address to,uint256 tokenId,bytes data)`
-- `setApprovalForAll(address operator,bool approved)`
-- `transferFrom(address from,address to,uint256 tokenId)`
+### 2. 完成认证
 
-**只读：**
+当 `now > deadline`、状态为 Provisional 且 `activeChallenges == 0` 时，任何人可调用：
 
-- `balanceOf(address owner)` → uint256
-- `core()` → address
-- `getApproved(uint256 tokenId)` → address
-- `isApprovedForAll(address owner,address operator)` → bool
-- `isRevoked(uint256 tokenId)` → bool
-- `name()` → string
-- `ownerOf(uint256 tokenId)` → address
-- `supportsInterface(bytes4 interfaceId)` → bool
-- `symbol()` → string
-- `tokenURI(uint256 tokenId)` → string
-- `verificationStatus(uint256 tokenId)` → uint8
+```text
+finalizeRecord(recordId)
+```
 
-## RecordNFT 事件
+成功后状态变 Verified、进入正式排名，提交质押进入玩家的 `claimable`。
 
-- `Approval(indexed address owner, indexed address approved, indexed uint256 tokenId)`
-- `ApprovalForAll(indexed address owner, indexed address operator, bool approved)`
-- `NFTMinted(indexed uint256 recordId, indexed address player, indexed uint256 gameId, uint256 score, bytes32 evidenceHash)`
-- `Transfer(indexed address from, indexed address to, indexed uint256 tokenId)`
+### 3. 发起挑战
 
-## CheatRegistry 函数
+先读取 `ChallengeReasonRegistry` 中的通用挑战理由，再调用：
 
-**写入：**
+```text
+challengeRecord(recordId, reasonId, evidenceHash, evidenceURI)
+```
 
-- `claimVoteStake(uint256 id)`
-- `finalizeProposal(uint256 id)`
-- `fundRewards()` **payable**
-- `proposeCheat(string name,string description,string evidenceURI)` → uint256 **payable**
-- `registerCheat(string name,string description)` → uint256
-- `renounceOwnership()`
-- `setParams(uint256 bond,uint256 reward,uint64 period,uint256 minStake,uint256 maxStake,uint256 quorum,uint32 minVoters_,uint16 approval)`
-- `transferOwnership(address newOwner)`
-- `voteOnProposal(uint256 id,bool support)` **payable**
-- `withdraw()`
+普通保证金读取 `params().challengeBond`。Verified 成绩属于特殊挑战，保证金乘以
+`specialBondMultiplier`，并要求协议池有足够的 `specialReward`。
 
-**只读：**
+### 4. Commit-Reveal 投票
 
-- `POWER_UNIT()` → uint256
-- `approvalBps()` → uint16
-- `cheatCount()` → uint256
-- `claimable(address )` → uint256
-- `getCheat(uint256 cheatId)` → (string,string,string,address,uint64,bool)
-- `isRegistered(uint256 cheatId)` → bool
-- `maxVoteStake()` → uint256
-- `minVoteStake()` → uint256
-- `minVoters()` → uint32
-- `nameTaken(bytes32 )` → bool
-- `owner()` → address
-- `proposalBond()` → uint256
-- `proposalCount()` → uint256
-- `proposals(uint256 )` → address,string,string,string,uint256,uint64,uint256,uint256,uint32,uint8,uint256
-- `proposerReward()` → uint256
-- `quorumPower()` → uint256
-- `rewardBalance()` → uint256
-- `votes(uint256 ,address )` → uint256,bool,bool
-- `votingPeriod()` → uint64
-- `votingPower(uint256 stake)` → uint256
+```ts
+import { bytesToHex, parseEther } from 'viem'
 
-## CheatRegistry 事件
+const challenge = await publicClient.readContract({
+  address: CORE,
+  abi: coreAbi,
+  functionName: 'getChallenge',
+  args: [challengeId],
+})
 
-- `CheatProposalFinalized(indexed uint256 proposalId, uint8 status, uint256 cheatId)`
-- `CheatProposalVoted(indexed uint256 proposalId, indexed address voter, bool support, uint256 stake, uint256 power)`
-- `CheatProposed(indexed uint256 proposalId, indexed address proposer, string name, uint256 bond, uint64 endTime)`
-- `CheatRegistered(indexed uint256 cheatId, string code, string name, indexed address discoverer)`
-- `DiscovererRewarded(indexed uint256 proposalId, indexed uint256 cheatId, indexed address proposer, uint256 amount)`
-- `OwnershipTransferred(indexed address previousOwner, indexed address newOwner)`
-- `RewardFunded(indexed address from, uint256 amount)`
-- `Withdrawn(indexed address account, uint256 amount)`
+const round = challenge.round
+const choice = 1 // Confirm；Deny 为 2
+const salt = bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
+const commitment = await publicClient.readContract({
+  address: CORE,
+  abi: coreAbi,
+  functionName: 'hashVote',
+  args: [challengeId, round, choice, salt, account.address],
+})
 
-## GameRegistry 函数
+await walletClient.writeContract({
+  account,
+  address: CORE,
+  abi: coreAbi,
+  functionName: 'commitVote',
+  args: [challengeId, commitment],
+  value: parseEther('0.3'),
+})
+```
 
-**写入：**
+commit 成功后持久化 `{chainId, core, challengeId, round, choice, salt, voter}`。建议 key：
 
-- `addGame(string name,uint32 gameVersion,uint32 ruleVersion)` → uint256
-- `addMode(uint256 gameId,string name)` → uint256
-- `renounceOwnership()`
-- `setGameActive(uint256 gameId,bool active)`
-- `setModeActive(uint256 gameId,uint256 modeId,bool active)`
-- `transferOwnership(address newOwner)`
-- `updateVersions(uint256 gameId,uint32 gameVersion,uint32 ruleVersion)`
+```text
+runproof:10143:<core>:<challengeId>:<round>:<voter>
+```
 
-**只读：**
+到 Reveal 阶段使用同一组值：
 
-- `CLASSIC()` → uint256
-- `MARATHON()` → uint256
-- `SPRINT()` → uint256
-- `TETRIS()` → uint256
-- `gameCount()` → uint256
-- `games(uint256 )` → string,uint32,uint32,bool
-- `isModeActive(uint256 gameId,uint256 modeId)` → bool
-- `modeActive(uint256 ,uint256 )` → bool
-- `modeCount(uint256 )` → uint256
-- `modeNames(uint256 ,uint256 )` → string
-- `owner()` → address
-- `versions(uint256 gameId)` → uint32,uint32
+```ts
+await walletClient.writeContract({
+  account,
+  address: CORE,
+  abi: coreAbi,
+  functionName: 'revealVote',
+  args: [challengeId, choice, salt],
+})
+```
 
-## GameRegistry 事件
+不要在 reveal 交易确认前删除 salt。未揭示或投错的一部分质押会被罚没。
 
-- `GameActiveSet(indexed uint256 gameId, bool active)`
-- `GameRegistered(indexed uint256 gameId, string name, uint32 gameVersion, uint32 ruleVersion)`
-- `GameVersionUpdated(indexed uint256 gameId, uint32 gameVersion, uint32 ruleVersion)`
-- `ModeActiveSet(indexed uint256 gameId, indexed uint256 modeId, bool active)`
-- `ModeRegistered(indexed uint256 gameId, indexed uint256 modeId, string name)`
-- `OwnershipTransferred(indexed address previousOwner, indexed address newOwner)`
+### 5. 结算与提款
+
+- `now >= revealEnd` 后，任何人调用 `finalizeVoting(challengeId)`。
+- 投票者每轮调用一次 `claimVote(challengeId, round)`。
+- 所有用户读取 `claimable(address)`，大于 0 时调用 `withdraw()`。
+- `finalizeVoting`、`claimVote` 和 `withdraw` 是三个独立步骤。
+
+### 6. NFT
+
+- Verified 成绩可调用 `RecordNFT.mint(recordId)`。
+- NFT 永远铸给成绩提交者，不是调用者。
+- 展示时实时读取 `verificationStatus(tokenId)`。
+- 成绩撤销后 NFT 不销毁，但状态变为 Revoked。
+
+## 前端按钮条件
+
+| 条件 | 动作 |
+|---|---|
+| Provisional、超过 deadline、无开放挑战 | `finalizeRecord` |
+| `now < commitEnd` | `commitVote`；当事人可 `submitEvidence` |
+| `commitEnd <= now < revealEnd` | `revealVote` |
+| `now >= revealEnd && !finalized` | `finalizeVoting` |
+| 该轮已结算且投票未领取 | `claimVote` |
+| `claimable(account) > 0` | `withdraw` |
+| Verified 且 NFT 不存在 | `RecordNFT.mint` |
+
+## 后端索引
+
+V2 完整榜单依赖事件索引。合约部署并在 Monad 浏览器完成源码验证后，再初始化 Envio
+HyperIndex。
+
+必须处理的事件：
+
+- `CategoryCreated`、`CategoryUpdated`、`DivisionCreated`
+- `RecordSubmitted`、`RecordVerified`、`RecordRevoked`
+- `LeaderboardUpdated`
+- `ChallengeCreated`、`EvidenceSubmitted`
+- `VoteCommitted`、`VoteRevealed`、`VotingFinalized`
+- `StakeReturned`、`StakeSlashed`、`RewardDistributed`、`Withdrawn`
+
+索引要求：
+
+1. 从 V2 部署区块开始同步。
+2. 原始日志唯一键使用 `(chainId, transactionHash, logIndex)`。
+3. 保存交易 hash，供前端链接浏览器。
+4. 处理区块重组并支持回滚重放。
+5. 榜单只查询 Verified；收到 `RecordRevoked` 立即移除。
+6. 用链上 `direction` 排序，再按 `submittedAt`、`recordId` 处理平分。
+7. 定期校验索引第一名是否等于链上 `bestRecordId`。
+
+## 常见错误
+
+- `division inactive`：分类或 division 未开放
+- `evidence already used`：证据摘要已提交
+- `insufficient payment`：提交费和质押不足
+- `unknown reason`：挑战理由不存在
+- `duplicate challenge`：同成绩、同理由已有非 Inconclusive 挑战
+- `pool cannot fund reward`：特殊挑战奖励池不足
+- `stake out of range`：投票质押不在允许范围
+- `commitment mismatch`：round、choice、salt 或 voter 不一致
+- `not reveal phase` / `commit phase over`：操作阶段错误
+- `window open` / `open challenges`：成绩还不能自动认证
+
+## 联调验收
+
+- 钱包不在 Chain ID `10143` 时阻止写入。
+- 支持 HigherIsBetter 和 LowerIsBetter 两类榜单。
+- 所有金额和成绩值使用 `bigint`。
+- 提交金额始终实时读取 `requiredPayment`。
+- commit 后刷新页面仍能恢复 salt 并成功 reveal。
+- 榜首被撤销后，页面榜首与链上 `bestRecordId` 一致。
+- Provisional、Verified、Revoked 不混淆。
+- 完成 `finalizeVoting -> claimVote -> withdraw` 全流程。
+- NFT 撤销后保留，并显示 Revoked。

@@ -1,4 +1,5 @@
 {
+  "version": "v1-legacy-game-records",
   "chainId": 10143,
   "network": "Monad Testnet",
   "deployer": "0xc338e05fD4F8322E1562DB052c42995223254B97",

@@ -12,79 +12,22 @@
   },
   {
     "type": "function",
-    "name": "CLASSIC",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MARATHON",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "SPRINT",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "TETRIS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "addGame",
+    "name": "addDivision",
     "inputs": [
+      {
+        "name": "categoryId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "name",
         "type": "string",
         "internalType": "string"
-      },
-      {
-        "name": "gameVersion",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "ruleVersion",
-        "type": "uint32",
-        "internalType": "uint32"
       }
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "divisionId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -93,31 +36,7 @@
   },
   {
     "type": "function",
-    "name": "addMode",
-    "inputs": [
-      {
-        "name": "gameId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "name",
-        "type": "string",
-        "internalType": "string"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "gameCount",
+    "name": "categoryCount",
     "inputs": [],
     "outputs": [
       {
@@ -130,24 +49,32 @@
   },
   {
     "type": "function",
-    "name": "games",
+    "name": "createCategory",
     "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
       {
         "name": "name",
         "type": "string",
         "internalType": "string"
       },
       {
-        "name": "gameVersion",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "descriptionURI",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "unit",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "direction",
+        "type": "uint8",
+        "internalType": "enum ICategoryRegistry.RankingDirection"
       },
       {
         "name": "ruleVersion",
@@ -155,40 +82,23 @@
         "internalType": "uint32"
       },
       {
-        "name": "active",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isModeActive",
-    "inputs": [
-      {
-        "name": "gameId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "modeId",
+        "name": "baseStake",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "categoryId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "modeActive",
+    "name": "divisionActive",
     "inputs": [
       {
         "name": "",
@@ -212,7 +122,7 @@
   },
   {
     "type": "function",
-    "name": "modeCount",
+    "name": "divisionCount",
     "inputs": [
       {
         "name": "",
@@ -231,7 +141,7 @@
   },
   {
     "type": "function",
-    "name": "modeNames",
+    "name": "divisionNames",
     "inputs": [
       {
         "name": "",
@@ -249,6 +159,91 @@
         "name": "",
         "type": "string",
         "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getCategory",
+    "inputs": [
+      {
+        "name": "categoryId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct CategoryRegistry.Category",
+        "components": [
+          {
+            "name": "name",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "descriptionURI",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "decimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "direction",
+            "type": "uint8",
+            "internalType": "enum ICategoryRegistry.RankingDirection"
+          },
+          {
+            "name": "ruleVersion",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "baseStake",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isDivisionActive",
+    "inputs": [
+      {
+        "name": "categoryId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "divisionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -268,6 +263,40 @@
   },
   {
     "type": "function",
+    "name": "rankingConfig",
+    "inputs": [
+      {
+        "name": "categoryId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "direction",
+        "type": "uint8",
+        "internalType": "enum ICategoryRegistry.RankingDirection"
+      },
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "ruleVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "baseStake",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "renounceOwnership",
     "inputs": [],
     "outputs": [],
@@ -275,10 +304,10 @@
   },
   {
     "type": "function",
-    "name": "setGameActive",
+    "name": "setCategoryActive",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -293,15 +322,15 @@
   },
   {
     "type": "function",
-    "name": "setModeActive",
+    "name": "setDivisionActive",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "modeId",
+        "name": "divisionId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -329,57 +358,58 @@
   },
   {
     "type": "function",
-    "name": "updateVersions",
+    "name": "updateCategory",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "gameVersion",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "descriptionURI",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "unit",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "direction",
+        "type": "uint8",
+        "internalType": "enum ICategoryRegistry.RankingDirection"
       },
       {
         "name": "ruleVersion",
         "type": "uint32",
         "internalType": "uint32"
+      },
+      {
+        "name": "baseStake",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "versions",
-    "inputs": [
-      {
-        "name": "gameId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
     "type": "event",
-    "name": "GameActiveSet",
+    "name": "CategoryActiveSet",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -395,10 +425,10 @@
   },
   {
     "type": "event",
-    "name": "GameRegistered",
+    "name": "CategoryCreated",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -410,57 +440,111 @@
         "internalType": "string"
       },
       {
-        "name": "gameVersion",
-        "type": "uint32",
+        "name": "unit",
+        "type": "string",
         "indexed": false,
-        "internalType": "uint32"
+        "internalType": "string"
+      },
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "direction",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum ICategoryRegistry.RankingDirection"
       },
       {
         "name": "ruleVersion",
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
+      },
+      {
+        "name": "baseStake",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "descriptionURI",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "GameVersionUpdated",
+    "name": "CategoryUpdated",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "gameVersion",
-        "type": "uint32",
+        "name": "name",
+        "type": "string",
         "indexed": false,
-        "internalType": "uint32"
+        "internalType": "string"
+      },
+      {
+        "name": "unit",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "decimals",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "direction",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum ICategoryRegistry.RankingDirection"
       },
       {
         "name": "ruleVersion",
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
+      },
+      {
+        "name": "baseStake",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "descriptionURI",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "ModeActiveSet",
+    "name": "DivisionActiveSet",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "modeId",
+        "name": "divisionId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -476,16 +560,16 @@
   },
   {
     "type": "event",
-    "name": "ModeRegistered",
+    "name": "DivisionCreated",
     "inputs": [
       {
-        "name": "gameId",
+        "name": "categoryId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "modeId",
+        "name": "divisionId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"

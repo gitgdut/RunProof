@@ -2,15 +2,16 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {GameRegistry} from "../src/GameRegistry.sol";
-import {CheatRegistry} from "../src/CheatRegistry.sol";
+import {CategoryRegistry} from "../src/CategoryRegistry.sol";
+import {ICategoryRegistry} from "../src/interfaces/ICategoryRegistry.sol";
+import {ChallengeReasonRegistry} from "../src/ChallengeReasonRegistry.sol";
 import {RunProofCore} from "../src/RunProofCore.sol";
 import {RecordNFT} from "../src/RecordNFT.sol";
 import {IRunProofCore} from "../src/interfaces/IRunProofCore.sol";
 
 contract RunProofTest is Test {
-    GameRegistry games;
-    CheatRegistry cheats;
+    CategoryRegistry categories;
+    ChallengeReasonRegistry reasons;
     RunProofCore core;
     RecordNFT nft;
 
@@ -25,9 +26,25 @@ contract RunProofTest is Test {
 
     function setUp() public {
         vm.startPrank(owner);
-        games = new GameRegistry(owner);
-        cheats = new CheatRegistry(owner);
-        core = new RunProofCore(owner, games, cheats);
+        categories = new CategoryRegistry(owner);
+        reasons = new ChallengeReasonRegistry(owner);
+        uint256 high = categories.createCategory(
+            "Open Score",
+            "ipfs://rules/high",
+            "points",
+            0,
+            ICategoryRegistry.RankingDirection.HigherIsBetter,
+            1,
+            0.05 ether
+        );
+        categories.addDivision(high, "Open");
+        categories.addDivision(high, "Women");
+        categories.addDivision(high, "Men");
+        uint256 low = categories.createCategory(
+            "Sprint", "ipfs://rules/low", "ms", 0, ICategoryRegistry.RankingDirection.LowerIsBetter, 1, 0.05 ether
+        );
+        categories.addDivision(low, "Open");
+        core = new RunProofCore(owner, categories, reasons);
         nft = new RecordNFT(core);
         vm.stopPrank();
         vm.deal(player, 100 ether);
@@ -42,16 +59,16 @@ contract RunProofTest is Test {
         return keccak256(abi.encode("ev", ++evNonce));
     }
 
-    function _submit(uint256 score) internal returns (uint256 id) {
-        uint256 pay = core.requiredPayment(1, 1, score);
+    function _submit(uint256 value) internal returns (uint256 id) {
+        uint256 pay = core.requiredPayment(1, 1, value);
         vm.prank(player);
-        id = core.submitRecord{value: pay}(1, 1, score, _ev(), "ipfs://evidence");
+        id = core.submitRecord{value: pay}(1, 1, value, _ev(), "ipfs://evidence");
     }
 
-    function _challenge(uint256 recordId, uint256 cheatId) internal returns (uint256 cid) {
+    function _challenge(uint256 recordId, uint256 reasonId) internal returns (uint256 cid) {
         RunProofCore.Params memory p = _p();
         vm.prank(challenger);
-        cid = core.challengeRecord{value: p.challengeBond}(recordId, cheatId, _ev(), "ipfs://cheat");
+        cid = core.challengeRecord{value: p.challengeBond}(recordId, reasonId, _ev(), "ipfs://category");
     }
 
     function _p() internal view returns (RunProofCore.Params memory p) {
@@ -139,11 +156,11 @@ contract RunProofTest is Test {
         RunProofCore.Record memory r = core.getRecord(id);
         assertEq(id, 1);
         assertEq(r.player, player);
-        assertEq(r.score, 5000);
+        assertEq(r.value, 5000);
         assertEq(r.evidenceHash, keccak256("e"));
         assertEq(r.deadline, r.submittedAt + 30 days);
         assertEq(uint8(r.status), uint8(IRunProofCore.RecordStatus.Provisional));
-        assertEq(r.gameVersion, 1);
+        assertEq(r.ruleVersion, 1);
         assertEq(core.poolBalance(), poolBefore + 0.01 ether);
     }
 
@@ -153,9 +170,9 @@ contract RunProofTest is Test {
         vm.startPrank(player);
         vm.expectRevert("evidence already used");
         core.submitRecord{value: 1 ether}(1, 1, 7000, used, "ipfs://x");
-        vm.expectRevert("zero score");
+        vm.expectRevert("zero value");
         core.submitRecord{value: 1 ether}(1, 1, 0, _ev(), "ipfs://x");
-        vm.expectRevert("mode inactive");
+        vm.expectRevert("division inactive");
         core.submitRecord{value: 1 ether}(1, 9, 100, _ev(), "ipfs://x");
         vm.expectRevert("insufficient payment");
         core.submitRecord{value: 0.001 ether}(1, 1, 100, _ev(), "ipfs://x");
@@ -163,20 +180,65 @@ contract RunProofTest is Test {
     }
 
     function test_dynamicStake() public {
-        // nothing verified yet -> every score beats the top => 2x tier
+        // Nothing verified yet: the first prospective leader uses the configured 2x multiplier.
         assertEq(core.requiredStake(1, 1, 5_000), 0.1 ether);
-        assertEq(core.requiredStake(1, 1, 50_000), 0.4 ether);
-        assertEq(core.requiredStake(1, 1, 500_000), 2 ether);
-        assertEq(core.requiredStake(1, 1, 5_000_000), 10 ether);
-        // verify a 50k record -> scores <= 50k are no longer "record breaking"
+        assertEq(core.requiredStake(1, 1, 50_000), 0.1 ether);
+        // Verify a 50k record: only a strictly better value receives the multiplier.
         uint256 id = _submit(50_000);
-        vm.warp(block.timestamp + 30 days + 1);
+        vm.warp(core.getRecord(id).deadline + 1);
         core.finalizeRecord(id);
-        assertEq(core.requiredStake(1, 1, 50_000), 0.2 ether);
+        assertEq(core.requiredStake(1, 1, 50_000), 0.05 ether);
         assertEq(core.requiredStake(1, 1, 5_000), 0.05 ether);
-        assertEq(core.requiredStake(1, 1, 60_000), 0.4 ether);
-        // modes are independent
-        assertEq(core.requiredStake(1, 2, 50_000), 0.4 ether);
+        assertEq(core.requiredStake(1, 1, 60_000), 0.1 ether);
+        // Divisions are independent.
+        assertEq(core.requiredStake(1, 2, 50_000), 0.1 ether);
+    }
+
+    function test_lowerIsBetterLeaderboard() public {
+        uint256 pay = core.requiredPayment(2, 1, 12_000);
+        vm.prank(player);
+        uint256 first = core.submitRecord{value: pay}(2, 1, 12_000, _ev(), "ipfs://12s");
+        vm.warp(block.timestamp + 30 days + 1);
+        core.finalizeRecord(first);
+        assertEq(core.bestRecordId(2, 1), first);
+        assertEq(core.requiredStake(2, 1, 13_000), 0.05 ether);
+        assertEq(core.requiredStake(2, 1, 11_000), 0.1 ether);
+
+        pay = core.requiredPayment(2, 1, 11_000);
+        vm.prank(player);
+        uint256 faster = core.submitRecord{value: pay}(2, 1, 11_000, _ev(), "ipfs://11s");
+        vm.warp(core.getRecord(faster).deadline + 1);
+        core.finalizeRecord(faster);
+        assertEq(core.bestRecordId(2, 1), faster);
+        assertTrue(core.outranks(faster, first));
+    }
+
+    function test_revokedLeaderFallsBackToNextVerifiedRecord() public {
+        uint256 first = _submit(100);
+        uint256 leader = _submit(200);
+        vm.warp(block.timestamp + 30 days + 1);
+        core.finalizeRecord(first);
+        core.finalizeRecord(leader);
+        assertEq(core.bestRecordId(1, 1), leader);
+
+        RunProofCore.Params memory p = _p();
+        vm.prank(challenger);
+        uint256 cid = core.challengeRecord{value: p.challengeBond * p.specialBondMultiplier}(
+            leader, 1, _ev(), "ipfs://invalid-leader"
+        );
+        _round(cid, 3, 0);
+        assertEq(uint8(_rstatus(leader)), uint8(IRunProofCore.RecordStatus.Revoked));
+        assertEq(core.bestRecordId(1, 1), first);
+    }
+
+    function test_equalValuesUseEarlierRecordAsTieBreaker() public {
+        uint256 first = _submit(100);
+        uint256 second = _submit(100);
+        vm.warp(core.getRecord(first).deadline + 1);
+        core.finalizeRecord(second);
+        core.finalizeRecord(first);
+        assertEq(core.bestRecordId(1, 1), first);
+        assertTrue(core.outranks(first, second));
     }
 
     function test_autoVerifyAfter30Days_refundsStake() public {
@@ -211,11 +273,11 @@ contract RunProofTest is Test {
         vm.startPrank(challenger);
         vm.expectRevert("duplicate challenge");
         core.challengeRecord{value: p.challengeBond}(id, C001, _ev(), "ipfs://again");
-        vm.expectRevert("unknown cheat");
+        vm.expectRevert("unknown reason");
         core.challengeRecord{value: p.challengeBond}(id, 99, _ev(), "ipfs://c");
         vm.expectRevert("insufficient bond");
         core.challengeRecord{value: 1}(id, C002, _ev(), "ipfs://c");
-        // a different cheat id is independent
+        // a different category id is independent
         core.challengeRecord{value: p.challengeBond}(id, C002, _ev(), "ipfs://c");
         vm.stopPrank();
 
@@ -410,7 +472,7 @@ contract RunProofTest is Test {
         _round(cid, 1, 4);
         assertEq(uint8(_status(cid)), uint8(RunProofCore.ChallengeStatus.Inconclusive));
         assertEq(uint8(_rstatus(id)), uint8(IRunProofCore.RecordStatus.Provisional));
-        // new evidence => a fresh challenge for the same record+cheat is allowed
+        // new evidence => a fresh challenge for the same record+category is allowed
         RunProofCore.Params memory p = _p();
         vm.prank(challenger);
         uint256 cid2 = core.challengeRecord{value: p.challengeBond}(id, C001, _ev(), "ipfs://new");
@@ -456,7 +518,7 @@ contract RunProofTest is Test {
 
     // ------------------------------------------------- settlement / rewards
 
-    function test_cheatConfirmed_slashAndRewards() public {
+    function test_categoryConfirmed_slashAndRewards() public {
         uint256 id = _submit(5000);
         uint256 stake = core.getRecord(id).stake;
         uint256 poolBefore = core.poolBalance();
@@ -553,11 +615,11 @@ contract RunProofTest is Test {
         uint256 bond = p.challengeBond * p.specialBondMultiplier;
         vm.prank(challenger);
         vm.expectRevert("insufficient bond");
-        core.challengeRecord{value: p.challengeBond}(id, C003(), _ev(), "ipfs://new");
+        core.challengeRecord{value: p.challengeBond}(id, R003(), _ev(), "ipfs://new");
 
         uint256 poolBefore = core.poolBalance();
         vm.prank(challenger);
-        uint256 cid = core.challengeRecord{value: bond}(id, C003(), _ev(), "ipfs://new");
+        uint256 cid = core.challengeRecord{value: bond}(id, R003(), _ev(), "ipfs://new");
         assertTrue(core.getChallenge(cid).special);
         assertEq(core.reservedPool(), p.specialReward);
 
@@ -571,14 +633,14 @@ contract RunProofTest is Test {
         assertGt(stake, 0);
     }
 
-    function C003() internal pure returns (uint256) {
+    function R003() internal pure returns (uint256) {
         return 3;
     }
 
     function test_specialChallenge_revertsIfPoolCannotFundReward() public {
         // fresh deployment with an empty pool
         vm.startPrank(owner);
-        RunProofCore c2 = new RunProofCore(owner, games, cheats);
+        RunProofCore c2 = new RunProofCore(owner, categories, reasons);
         vm.stopPrank();
         vm.prank(player);
         uint256 id = c2.submitRecord{value: 1 ether}(1, 1, 5000, _ev(), "ipfs://e");
@@ -640,61 +702,90 @@ contract RunProofTest is Test {
     // ---------------------------------------------------------- registries
 
     function test_registries() public view {
-        assertEq(games.modeCount(1), 3);
-        assertEq(games.modeNames(1, 2), "Sprint");
-        assertTrue(games.isModeActive(1, 3));
-        assertFalse(games.isModeActive(1, 4));
-        assertEq(cheats.cheatCount(), 5);
-        assertEq(cheats.getCheat(1).code, "C001");
-        assertEq(cheats.getCheat(5).code, "C005");
-        assertEq(cheats.getCheat(5).name, "Modified Game Files");
-        assertFalse(cheats.isRegistered(6));
+        assertEq(categories.divisionCount(1), 3);
+        assertEq(categories.divisionNames(1, 2), "Women");
+        assertTrue(categories.isDivisionActive(1, 3));
+        assertFalse(categories.isDivisionActive(1, 4));
+        assertEq(reasons.reasonCount(), 5);
+        assertEq(reasons.getReason(1).code, "R001");
+        assertEq(reasons.getReason(5).code, "R005");
+        assertEq(reasons.getReason(5).name, "Invalid Measurement");
+        assertFalse(reasons.isRegistered(6));
     }
 
-    function test_cheatProposal_approvedAt75() public {
+    function test_categoryRankingSemanticsAreImmutable() public {
+        vm.startPrank(owner);
+        vm.expectRevert("ranking immutable");
+        categories.updateCategory(
+            1,
+            "Open Score",
+            "ipfs://rules/v2",
+            "points",
+            0,
+            ICategoryRegistry.RankingDirection.LowerIsBetter,
+            2,
+            0.2 ether
+        );
+        categories.updateCategory(
+            1,
+            "Open Score",
+            "ipfs://rules/v2",
+            "points",
+            0,
+            ICategoryRegistry.RankingDirection.HigherIsBetter,
+            2,
+            0.2 ether
+        );
+        vm.stopPrank();
+        (,, uint32 version, uint256 baseStake) = categories.rankingConfig(1);
+        assertEq(version, 2);
+        assertEq(baseStake, 0.2 ether);
+    }
+
+    function test_reasonProposal_approvedAt75() public {
         address proposer = makeAddr("proposer");
         vm.deal(proposer, 5 ether);
-        cheats.fundRewards{value: 1 ether}();
+        reasons.fundRewards{value: 1 ether}();
         vm.prank(proposer);
-        uint256 pid = cheats.proposeCheat{value: 0.1 ether}("Input Macro Hardware", "desc", "ipfs://p");
+        uint256 pid = reasons.proposeReason{value: 0.1 ether}("Unapproved Equipment", "desc", "ipfs://p");
         vm.prank(proposer);
         vm.expectRevert("name taken");
-        cheats.proposeCheat{value: 0.1 ether}("Input Macro Hardware", "desc", "ipfs://p");
+        reasons.proposeReason{value: 0.1 ether}("Unapproved Equipment", "desc", "ipfs://p");
         for (uint256 i; i < 4; i++) {
             address v = _voter(0x3000, i);
             vm.deal(v, 5 ether);
             vm.prank(v);
-            cheats.voteOnProposal{value: 1 ether}(pid, i < 3); // 3 for, 1 against = 75%
+            reasons.voteOnProposal{value: 1 ether}(pid, i < 3); // 3 for, 1 against = 75%
         }
         vm.expectRevert("voting open");
-        cheats.finalizeProposal(pid);
+        reasons.finalizeProposal(pid);
         vm.warp(block.timestamp + 3 days);
-        cheats.finalizeProposal(pid);
-        assertTrue(cheats.isRegistered(6));
-        assertEq(cheats.getCheat(6).code, "C006");
-        assertEq(cheats.claimable(proposer), 0.1 ether + 0.1 ether);
+        reasons.finalizeProposal(pid);
+        assertTrue(reasons.isRegistered(6));
+        assertEq(reasons.getReason(6).code, "R006");
+        assertEq(reasons.claimable(proposer), 0.1 ether + 0.1 ether);
         vm.prank(_voter(0x3000, 0));
-        cheats.claimVoteStake(pid);
+        reasons.claimVoteStake(pid);
         vm.prank(_voter(0x3000, 0));
         vm.expectRevert("nothing to claim");
-        cheats.claimVoteStake(pid);
+        reasons.claimVoteStake(pid);
     }
 
-    function test_cheatProposal_rejectedBelow75() public {
+    function test_reasonProposal_rejectedBelow75() public {
         address proposer = makeAddr("proposer");
         vm.deal(proposer, 5 ether);
         vm.prank(proposer);
-        uint256 pid = cheats.proposeCheat{value: 0.1 ether}("Weak Claim", "desc", "ipfs://p");
+        uint256 pid = reasons.proposeReason{value: 0.1 ether}("Weak Claim", "desc", "ipfs://p");
         for (uint256 i; i < 4; i++) {
             address v = _voter(0x3000, i);
             vm.deal(v, 5 ether);
             vm.prank(v);
-            cheats.voteOnProposal{value: 1 ether}(pid, i < 2);
+            reasons.voteOnProposal{value: 1 ether}(pid, i < 2);
         }
         vm.warp(block.timestamp + 3 days);
-        cheats.finalizeProposal(pid);
-        assertFalse(cheats.isRegistered(6));
-        assertEq(cheats.claimable(proposer), 0);
+        reasons.finalizeProposal(pid);
+        assertFalse(reasons.isRegistered(6));
+        assertEq(reasons.claimable(proposer), 0);
     }
 
     // --------------------------------------------------------------- security

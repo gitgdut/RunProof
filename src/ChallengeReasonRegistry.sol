@@ -4,15 +4,19 @@ pragma solidity ^0.8.24;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-import {ICheatRegistry} from "./interfaces/ICheatRegistry.sol";
+import {IChallengeReasonRegistry} from "./interfaces/IChallengeReasonRegistry.sol";
 
-/// @notice Registry of cheat types (C001..) plus community proposals for new ones.
-/// Proposal voting is stake-weighted (1 address = 1 vote, linear power, capped stake).
-/// Voter stakes are never slashed here; they are returned in full after finalization.
-contract CheatRegistry is ICheatRegistry, Ownable, ReentrancyGuard {
-    enum ProposalStatus { None, Voting, Approved, Rejected, Inconclusive }
+/// @notice Generic challenge reasons (R001...) with owner and community registration paths.
+contract ChallengeReasonRegistry is IChallengeReasonRegistry, Ownable, ReentrancyGuard {
+    enum ProposalStatus {
+        None,
+        Voting,
+        Approved,
+        Rejected,
+        Inconclusive
+    }
 
-    struct Cheat {
+    struct Reason {
         string code;
         string name;
         string description;
@@ -32,7 +36,7 @@ contract CheatRegistry is ICheatRegistry, Ownable, ReentrancyGuard {
         uint256 againstPower;
         uint32 voters;
         ProposalStatus status;
-        uint256 cheatId;
+        uint256 reasonId;
     }
 
     struct Vote {
@@ -42,16 +46,13 @@ contract CheatRegistry is ICheatRegistry, Ownable, ReentrancyGuard {
     }
 
     uint256 public constant POWER_UNIT = 1e15;
-
-    uint256 public cheatCount;
+    uint256 public reasonCount;
     uint256 public proposalCount;
-    mapping(uint256 => Cheat) private _cheats;
+    mapping(uint256 => Reason) private _reasons;
     mapping(uint256 => Proposal) public proposals;
     mapping(uint256 => mapping(address => Vote)) public votes;
     mapping(bytes32 => bool) public nameTaken;
     mapping(address => uint256) public claimable;
-
-    /// funds for proposer rewards (donations + forfeited bonds)
     uint256 public rewardBalance;
 
     uint256 public proposalBond = 0.1 ether;
@@ -63,38 +64,41 @@ contract CheatRegistry is ICheatRegistry, Ownable, ReentrancyGuard {
     uint32 public minVoters = 3;
     uint16 public approvalBps = 7500;
 
-    event CheatRegistered(uint256 indexed cheatId, string code, string name, address indexed discoverer);
-    event CheatProposed(uint256 indexed proposalId, address indexed proposer, string name, uint256 bond, uint64 endTime);
-    event CheatProposalVoted(uint256 indexed proposalId, address indexed voter, bool support, uint256 stake, uint256 power);
-    event CheatProposalFinalized(uint256 indexed proposalId, ProposalStatus status, uint256 cheatId);
-    event DiscovererRewarded(uint256 indexed proposalId, uint256 indexed cheatId, address indexed proposer, uint256 amount);
+    event ReasonRegistered(uint256 indexed reasonId, string code, string name, address indexed discoverer);
+    event ReasonProposed(
+        uint256 indexed proposalId, address indexed proposer, string name, uint256 bond, uint64 endTime
+    );
+    event ReasonProposalVoted(
+        uint256 indexed proposalId, address indexed voter, bool support, uint256 stake, uint256 power
+    );
+    event ReasonProposalFinalized(uint256 indexed proposalId, ProposalStatus status, uint256 reasonId);
+    event DiscovererRewarded(
+        uint256 indexed proposalId, uint256 indexed reasonId, address indexed proposer, uint256 amount
+    );
     event Withdrawn(address indexed account, uint256 amount);
     event RewardFunded(address indexed from, uint256 amount);
+    event ParamsUpdated();
 
     constructor(address owner_) Ownable(owner_) {
-        _register("Automated Input", "Bots, macros or scripts generating inputs", address(0));
-        _register("RNG Manipulation", "Manipulating or predicting the random piece generator", address(0));
-        _register("Memory Modification", "Editing process memory to change score or state", address(0));
-        _register("Replay Injection", "Injecting or splicing pre-recorded replays as live play", address(0));
-        _register("Modified Game Files", "Running modified binaries or assets that alter gameplay", address(0));
+        _register("Fabricated Evidence", "Evidence was fabricated or materially altered", address(0));
+        _register("Rule Violation", "The submission does not comply with the category rules", address(0));
+        _register("Identity Mismatch", "The submitter is not the person represented by the evidence", address(0));
+        _register("Duplicate Submission", "The same achievement was submitted more than once", address(0));
+        _register("Invalid Measurement", "The measurement method or device is not acceptable", address(0));
     }
 
-    // ---------------- views ----------------
-
-    function isRegistered(uint256 cheatId) external view returns (bool) {
-        return _cheats[cheatId].registered;
+    function isRegistered(uint256 reasonId) external view returns (bool) {
+        return _reasons[reasonId].registered;
     }
 
-    function getCheat(uint256 cheatId) external view returns (Cheat memory) {
-        require(_cheats[cheatId].registered, "unknown cheat");
-        return _cheats[cheatId];
+    function getReason(uint256 reasonId) external view returns (Reason memory) {
+        require(_reasons[reasonId].registered, "unknown reason");
+        return _reasons[reasonId];
     }
 
     function votingPower(uint256 stake) public pure returns (uint256) {
         return stake / POWER_UNIT;
     }
-
-    // ---------------- admin ----------------
 
     function setParams(
         uint256 bond,
@@ -117,10 +121,10 @@ contract CheatRegistry is ICheatRegistry, Ownable, ReentrancyGuard {
         quorumPower = quorum;
         minVoters = minVoters_;
         approvalBps = approval;
+        emit ParamsUpdated();
     }
 
-    /// @notice Owner-curated registration (used for fast additions); community path is proposeCheat.
-    function registerCheat(string calldata name, string calldata description) external onlyOwner returns (uint256) {
+    function registerReason(string calldata name, string calldata description) external onlyOwner returns (uint256) {
         bytes32 h = keccak256(bytes(name));
         require(!nameTaken[h], "name taken");
         nameTaken[h] = true;
@@ -132,13 +136,11 @@ contract CheatRegistry is ICheatRegistry, Ownable, ReentrancyGuard {
         emit RewardFunded(msg.sender, msg.value);
     }
 
-    // ---------------- proposals ----------------
-
-    function proposeCheat(string calldata name, string calldata description, string calldata evidenceURI)
+    function proposeReason(string calldata name, string calldata description, string calldata evidenceURI)
         external
         payable
         nonReentrant
-        returns (uint256 id)
+        returns (uint256 proposalId)
     {
         require(bytes(name).length > 0 && bytes(description).length > 0, "empty text");
         require(msg.value >= proposalBond, "bond too low");
@@ -146,8 +148,8 @@ contract CheatRegistry is ICheatRegistry, Ownable, ReentrancyGuard {
         require(!nameTaken[h], "name taken");
         nameTaken[h] = true;
 
-        id = ++proposalCount;
-        Proposal storage p = proposals[id];
+        proposalId = ++proposalCount;
+        Proposal storage p = proposals[proposalId];
         p.proposer = msg.sender;
         p.name = name;
         p.description = description;
@@ -156,15 +158,15 @@ contract CheatRegistry is ICheatRegistry, Ownable, ReentrancyGuard {
         p.endTime = uint64(block.timestamp) + votingPeriod;
         p.status = ProposalStatus.Voting;
         if (msg.value > proposalBond) claimable[msg.sender] += msg.value - proposalBond;
-        emit CheatProposed(id, msg.sender, name, proposalBond, p.endTime);
+        emit ReasonProposed(proposalId, msg.sender, name, proposalBond, p.endTime);
     }
 
-    function voteOnProposal(uint256 id, bool support) external payable nonReentrant {
-        Proposal storage p = proposals[id];
+    function voteOnProposal(uint256 proposalId, bool support) external payable nonReentrant {
+        Proposal storage p = proposals[proposalId];
         require(p.status == ProposalStatus.Voting && block.timestamp < p.endTime, "not votable");
         require(msg.sender != p.proposer, "proposer cannot vote");
         require(msg.value >= minVoteStake && msg.value <= maxVoteStake, "stake out of range");
-        Vote storage v = votes[id][msg.sender];
+        Vote storage v = votes[proposalId][msg.sender];
         require(v.stake == 0, "already voted");
         v.stake = msg.value;
         v.support = support;
@@ -172,11 +174,11 @@ contract CheatRegistry is ICheatRegistry, Ownable, ReentrancyGuard {
         if (support) p.forPower += power;
         else p.againstPower += power;
         p.voters++;
-        emit CheatProposalVoted(id, msg.sender, support, msg.value, power);
+        emit ReasonProposalVoted(proposalId, msg.sender, support, msg.value, power);
     }
 
-    function finalizeProposal(uint256 id) external nonReentrant {
-        Proposal storage p = proposals[id];
+    function finalizeProposal(uint256 proposalId) external nonReentrant {
+        Proposal storage p = proposals[proposalId];
         require(p.status == ProposalStatus.Voting, "not voting");
         require(block.timestamp >= p.endTime, "voting open");
         uint256 total = p.forPower + p.againstPower;
@@ -188,51 +190,50 @@ contract CheatRegistry is ICheatRegistry, Ownable, ReentrancyGuard {
             claimable[p.proposer] += p.bond;
         } else if (p.forPower * 10000 >= uint256(approvalBps) * total) {
             p.status = ProposalStatus.Approved;
-            uint256 cheatId = _register(p.name, p.description, p.proposer);
-            p.cheatId = cheatId;
+            p.reasonId = _register(p.name, p.description, p.proposer);
             claimable[p.proposer] += p.bond;
             uint256 reward = proposerReward > rewardBalance ? rewardBalance : proposerReward;
             if (reward > 0) {
                 rewardBalance -= reward;
                 claimable[p.proposer] += reward;
-                emit DiscovererRewarded(id, cheatId, p.proposer, reward);
+                emit DiscovererRewarded(proposalId, p.reasonId, p.proposer, reward);
             }
         } else {
             p.status = ProposalStatus.Rejected;
             nameTaken[h] = false;
-            rewardBalance += p.bond; // bond forfeited
+            rewardBalance += p.bond;
         }
-        emit CheatProposalFinalized(id, p.status, p.cheatId);
+        emit ReasonProposalFinalized(proposalId, p.status, p.reasonId);
     }
 
-    /// @notice Return a voter's stake after the proposal is finalized (stake is never slashed here).
-    function claimVoteStake(uint256 id) external nonReentrant {
-        require(proposals[id].status > ProposalStatus.Voting, "not finalized");
-        Vote storage v = votes[id][msg.sender];
+    function claimVoteStake(uint256 proposalId) external nonReentrant {
+        require(proposals[proposalId].status > ProposalStatus.Voting, "not finalized");
+        Vote storage v = votes[proposalId][msg.sender];
         require(v.stake > 0 && !v.claimed, "nothing to claim");
         v.claimed = true;
         claimable[msg.sender] += v.stake;
     }
 
     function withdraw() external nonReentrant {
-        uint256 amt = claimable[msg.sender];
-        require(amt > 0, "nothing to withdraw");
+        uint256 amount = claimable[msg.sender];
+        require(amount > 0, "nothing to withdraw");
         claimable[msg.sender] = 0;
-        (bool ok,) = msg.sender.call{value: amt}("");
+        (bool ok,) = msg.sender.call{value: amount}("");
         require(ok, "transfer failed");
-        emit Withdrawn(msg.sender, amt);
+        emit Withdrawn(msg.sender, amount);
     }
 
-    // ---------------- internal ----------------
-
-    function _register(string memory name, string memory description, address discoverer) internal returns (uint256 id) {
-        id = ++cheatCount;
-        string memory num = Strings.toString(id);
-        string memory code = id < 10
-            ? string.concat("C00", num)
-            : id < 100 ? string.concat("C0", num) : string.concat("C", num);
-        _cheats[id] = Cheat(code, name, description, discoverer, uint64(block.timestamp), true);
+    function _register(string memory name, string memory description, address discoverer)
+        internal
+        returns (uint256 reasonId)
+    {
+        reasonId = ++reasonCount;
+        string memory number = Strings.toString(reasonId);
+        string memory code = reasonId < 10
+            ? string.concat("R00", number)
+            : reasonId < 100 ? string.concat("R0", number) : string.concat("R", number);
+        _reasons[reasonId] = Reason(code, name, description, discoverer, uint64(block.timestamp), true);
         nameTaken[keccak256(bytes(name))] = true;
-        emit CheatRegistered(id, code, name, discoverer);
+        emit ReasonRegistered(reasonId, code, name, discoverer);
     }
 }
