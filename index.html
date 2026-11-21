@@ -109,7 +109,14 @@
 <div id="toast"></div>
 
 <script type="module">
-import { createPublicClient, http, formatEther, parseAbi } from 'https://esm.sh/viem@2.21.55';
+// Prefer the vendored bundle next to this file (GitHub Pages build); fall back to the CDN locally.
+let viem;
+try {
+  viem = await import('./viem.js');
+} catch {
+  viem = await import('https://esm.sh/viem@2.21.55');
+}
+const { createPublicClient, http, formatEther, parseAbi } = viem;
 
 const RPC = 'https://testnet-rpc.monad.xyz';
 const CORE = '0x1eb96bf618151adA2F7174CE9b8c41F45486084F';
