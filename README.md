@@ -47,18 +47,30 @@ pnpm dev
 
 枚举按链上数值存储，不做本地翻译：`RecordStatus` 0 None / 1 Provisional / 2 Verified / 3 Revoked；`ChallengeStatus` 0–5；`Choice` 0 None / 1 Confirm / 2 Deny；`direction` 1 HigherIsBetter / 2 LowerIsBetter；`StakeKind`/`SlashKind` 0–2；`RewardKind` 0–2。API 同时返回数值（`statusCode`）与名称（`status`）。
 
-### ABI 来源（务必知悉）
+### ABI 与合约的职责边界
 
-合约分支 `origin/contracts/core` 目前仍发布 V1 的 `CheatRegistry/GameRegistry`，**没有 V2 的 `abi/*.json`**。因此本仓库的 ABI 是依据 `BACKEND-HANDOFF.md` 的签名重建、并用真实链数据校验过的：
+合约不归后端维护。`abi/*.json` 的**准绳是合约团队的产物**，本仓库里的副本只用于"对齐"：读事件、读 view、拼未签名交易。后端不改合约、不发布合约、也不代签交易。
+
+当前 `origin/contracts/core` 发布的仍是 V1（`CheatRegistry/GameRegistry`），没有 V2 的 ABI 文件，所以这份副本是依据 `BACKEND-HANDOFF.md` 的签名重建、并逐项对真实链校验过的：
 
 ```bash
 pnpm abi:gen     # 从 scripts/gen-abi.ts 的声明生成 abi/*.json
-pnpm abi:check   # 用生成的 JSON 反查真实链：getRecord / getCategory / getReason / rounds / votes / params / bestRecordId / requiredPayment / claimable
+pnpm abi:check   # 用生成的 JSON 真调链：getRecord / getCategory / getReason / rounds / votes / params / bestRecordId / requiredPayment / claimable
 ```
 
-校验结果（2026-11-21 实测）：`getRecord(1)` = category 4 / division 1 / value 1152345 / direction 2 / Verified；`getCategory(1)` = 100m Sprint / ms / LowerIsBetter；`getReason(1)` = R001 Fabricated Evidence；`params()` 中 `minVoters=3`、`quorumPower=300`、`approvalBps=7500`、`wrongSlashBps=3000`，与文档一致。
+2026-11-21 实测：`getRecord(1)` = category 4 / division 1 / value 1152345 / direction 2 / Verified；`getCategory(1)` = 100m Sprint / ms / LowerIsBetter；`getReason(1)` = R001 Fabricated Evidence；`params()` 中 `minVoters=3`、`quorumPower=300`、`approvalBps=7500`、`wrongSlashBps=3000`。从部署块起 300 个区块解出 91 条日志、19 类事件。
 
-`getRecord`/`getCategory`/`getReason` 返回的是**单个 tuple（带外层 offset）**，`rounds`/`votes`/`params` 返回的是**扁平多值**，这一区别已在 `src/indexer/reads.ts` 中处理。合约团队发布正式 ABI 后，优先用他们的文件覆盖 `abi/`，再跑一次 `pnpm abi:check`。
+契约细节里最容易写错的两点已在 `src/indexer/reads.ts` 处理：`getRecord`/`getCategory`/`getReason` 返回**单个 tuple（带外层 offset）**，`rounds`/`votes`/`params` 返回**扁平多值且无命名**（只按下标取）。
+
+**合约团队发布正式 ABI 或重新部署时，后端只需三步**（不改任何业务代码）：
+
+1. 用官方 `abi/*.json` 覆盖本仓库同名文件；
+2. 更新 `.env` 的四个地址与 `INDEXER_START_BLOCK`；
+3. `pnpm abi:check` 核对只读方法，再 `INDEXER_ONCE=true pnpm indexer` 回放，最后看 `/api/health` 的 `lastReconcile.ok`。
+
+只有事件的**语义**变了（字段增减、枚举重排）才需要改 `src/indexer/handlers.ts`；纯签名补充不用。
+
+## 索引器
 
 ## 索引器
 
