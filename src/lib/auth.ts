@@ -19,16 +19,17 @@ function verifyExpiry(expiresAt: string) {
 
 export function recordMessage(input: Omit<CreateRecordInput, "signature">) {
   return [
-    "RunProof: Submit game record v1",
+    "RunProof: Index submitted record v2",
     `Chain ID: ${chainId()}`,
+    `Record ID: ${input.recordId}`,
     `Player: ${input.playerAddress}`,
-    `Game: ${input.gameId}`,
-    `Mode: ${input.gameMode}`,
+    `Game ID: ${input.gameId}`,
+    `Mode ID: ${input.gameMode}`,
     `Score: ${input.score}`,
     `Stake (wei): ${input.stakeAmount}`,
-    `Video URL: ${input.videoUrl}`,
-    `Replay URL: ${input.replayUrl ?? ""}`,
-    `Evidence: ${input.evidenceHash}`,
+    `Evidence hash: ${input.evidenceHash}`,
+    `Evidence URI: ${input.evidenceURI}`,
+    `Deadline: ${input.challengeDeadline}`,
     `Transaction: ${input.transactionHash}`,
     `Expires: ${input.expiresAt}`,
   ].join("\n");
@@ -36,12 +37,16 @@ export function recordMessage(input: Omit<CreateRecordInput, "signature">) {
 
 export function challengeMessage(input: Omit<CreateChallengeInput, "signature">) {
   return [
-    "RunProof: Create challenge v1",
+    "RunProof: Index submitted challenge v2",
     `Chain ID: ${chainId()}`,
-    `Record: ${input.recordId}`,
-    `Cheat: ${input.cheatId}`,
+    `Challenge ID: ${input.challengeId}`,
+    `Record ID: ${input.recordId}`,
+    `Cheat ID: ${input.cheatId}`,
     `Challenger: ${input.challenger}`,
-    `Evidence: ${input.evidenceHash}`,
+    `Bond (wei): ${input.bond}`,
+    `Special: ${input.special}`,
+    `Evidence hash: ${input.evidenceHash}`,
+    `Evidence URI: ${input.evidenceURI}`,
     `Transaction: ${input.transactionHash}`,
     `Expires: ${input.expiresAt}`,
   ].join("\n");
@@ -49,13 +54,14 @@ export function challengeMessage(input: Omit<CreateChallengeInput, "signature">)
 
 export function cheatMessage(input: Omit<CreateCheatInput, "signature">) {
   return [
-    "RunProof: Register cheat v1",
+    "RunProof: Cache cheat metadata v2",
     `Chain ID: ${chainId()}`,
+    `Cheat ID: ${input.cheatId}`,
     `Admin: ${input.adminAddress}`,
-    `Game: ${input.gameId}`,
     `Code: ${input.cheatCode}`,
     `Name: ${input.name}`,
-    `Description: ${input.description}`,
+    `Description: ${input.description ?? ""}`,
+    `Evidence URI: ${input.evidenceURI ?? ""}`,
     `Expires: ${input.expiresAt}`,
   ].join("\n");
 }
@@ -79,7 +85,7 @@ export async function verifyChallengeSignature(input: CreateChallengeInput) {
 
 export async function verifyCheatSignature(input: CreateCheatInput) {
   const admins = (process.env.CHEAT_REGISTRY_ADMIN_ADDRESSES ?? "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
-  if (!admins.includes(input.adminAddress)) throw new AppError(403, "NOT_REGISTRY_ADMIN", "Wallet is not authorized to manage the cheat registry");
+  if (!admins.includes(input.adminAddress)) throw new AppError(403, "NOT_REGISTRY_ADMIN", "Wallet is not authorized to manage cheat metadata");
   const { signature, ...unsigned } = input;
   verifyExpiry(input.expiresAt);
   await verify(input.adminAddress, cheatMessage(unsigned), signature);

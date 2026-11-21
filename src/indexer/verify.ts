@@ -1,6 +1,6 @@
 import { readIntegerEnv } from "../lib/config";
 import { prisma } from "../lib/db";
-import { runProofAbi } from "./abi";
+import { indexedEvents } from "./abi";
 import { indexerConfig } from "./config";
 import { ChainReorgError, monadClient } from "./sync";
 
@@ -17,7 +17,7 @@ async function verifyRecentEvents() {
   }
   const lookback = BigInt(readIntegerEnv("INDEXER_VERIFY_LOOKBACK", 1000, 0, 1_000_000));
   const fromBlock = state.lastBlock > lookback ? state.lastBlock - lookback : 0n;
-  const logs = await client.getLogs({ address: config.address, events: runProofAbi, fromBlock, toBlock: state.lastBlock, strict: true });
+  const logs = await client.getLogs({ address: config.addresses, events: indexedEvents, fromBlock, toBlock: state.lastBlock, strict: true });
   const mismatches: string[] = [];
   for (const log of logs) {
     if (!log.transactionHash || log.logIndex === null || !log.blockHash || !log.eventName) continue;

@@ -1,12 +1,41 @@
-import { parseAbi } from "viem";
+import type { Abi, AbiEvent } from "viem";
+import coreArtifact from "../../abi/RunProofCore.json";
+import cheatArtifact from "../../abi/CheatRegistry.json";
+import gameArtifact from "../../abi/GameRegistry.json";
+import nftArtifact from "../../abi/RecordNFT.json";
 
-// Proposed event ABI only. Confirm every argument with the contract team before deployment.
-export const runProofAbi = parseAbi([
-  "event RecordSubmitted(bytes32 indexed recordId, address indexed playerAddress, string gameId, string gameMode, uint256 score, uint256 stakeAmount, bytes32 evidenceHash)",
-  "event ChallengeCreated(bytes32 indexed challengeId, bytes32 indexed recordId, bytes32 indexed cheatId, address challenger, bytes32 evidenceHash)",
-  "event VoteCommitted(bytes32 indexed challengeId, address indexed voterAddress, bytes32 commitHash, uint256 stakeAmount)",
-  "event VotingFinalized(bytes32 indexed challengeId, bool challengeUpheld)",
-  "event RecordVerified(bytes32 indexed recordId)",
-  "event RecordRevoked(bytes32 indexed recordId)",
-  "event RewardDistributed(bytes32 indexed rewardId, address indexed walletAddress, uint256 amount, uint8 rewardType, bytes32 relatedRecordId)",
+export const coreAbi = coreArtifact as unknown as Abi;
+export const cheatRegistryAbi = cheatArtifact as unknown as Abi;
+export const gameRegistryAbi = gameArtifact as unknown as Abi;
+export const recordNftAbi = nftArtifact as unknown as Abi;
+
+function selectedEvents(abi: Abi, names: string[]): AbiEvent[] {
+  return abi.filter((item): item is AbiEvent => item.type === "event" && names.includes(item.name ?? ""));
+}
+
+const coreEvents = selectedEvents(coreAbi, [
+  "RecordSubmitted",
+  "ChallengeCreated",
+  "EvidenceSubmitted",
+  "VoteCommitted",
+  "VoteRevealed",
+  "VotingExtended",
+  "EvidenceVotingStarted",
+  "VotingFinalized",
+  "RecordVerified",
+  "RecordRevoked",
+  "RewardDistributed",
+  "StakeReturned",
+  "StakeSlashed",
 ]);
+const cheatEvents = selectedEvents(cheatRegistryAbi, ["CheatRegistered"]);
+const gameEvents = selectedEvents(gameRegistryAbi, [
+  "GameRegistered",
+  "GameVersionUpdated",
+  "GameActiveSet",
+  "ModeRegistered",
+  "ModeActiveSet",
+]);
+const nftEvents = selectedEvents(recordNftAbi, ["NFTMinted", "Transfer"]);
+
+export const indexedEvents = [...coreEvents, ...cheatEvents, ...gameEvents, ...nftEvents];
