@@ -13,7 +13,9 @@ import {RecordNFT} from "../src/RecordNFT.sol";
 /// Optional env: POOL_SEED (wei) to pre-fund the reward pool, DEMO_PERIODS=1 for short demo voting windows.
 contract Deploy is Script {
     function run() external {
-        uint256 pk = vm.envUint("PRIVATE_KEY");
+        string memory privateKey = vm.envString("PRIVATE_KEY");
+        if (bytes(privateKey).length == 64) privateKey = string.concat("0x", privateKey);
+        uint256 pk = vm.parseUint(privateKey);
         address deployer = vm.addr(pk);
         uint256 poolSeed = vm.envOr("POOL_SEED", uint256(0));
         bool demo = vm.envOr("DEMO_PERIODS", uint256(0)) == 1;
