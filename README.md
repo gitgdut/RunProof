@@ -7,6 +7,13 @@ exam scores — anything expressible as an integer.
 Status: deployed on **Monad Testnet (chain `10143`)**, source verified **4/4 perfect** on MonadVision,
 **32/32 tests passing**.
 
+**Live links**
+
+- Leaderboard (live, reads the chain in your browser): https://gitgdut.github.io/RunProof/
+- 4-minute walkthrough (silent, captioned scenes): https://gitgdut.github.io/RunProof/record.html
+- Demo video: _to be added_
+- Contracts: see the table below (all verified on `testnet.monadexplorer.com`)
+
 > **中文简介**
 > RunProof 把「成绩 + 证据 + 判定过程」全部放到链上：管理员只开分类（定单位、定越高越好还是越低越好），
 > 任何人都能提交成绩并质押 MON，过了挑战期自动认证；有人质疑就进入 Commit-Reveal 匿名投票。
