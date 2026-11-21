@@ -1,5 +1,7 @@
 # RunProof — universal on-chain achievement rankings
 
+**English** · [简体中文](README.zh-CN.md)
+
 **Any measurable result, ranked on-chain, with the ranking itself computed by a contract and disputes
 settled by stake-weighted voting.** Not a game leaderboard: Minecraft speedruns, click speed, pull-ups,
 exam scores — anything expressible as an integer.
@@ -19,6 +21,8 @@ Status: deployed on **Monad Testnet (chain `10143`)**, source verified **4/4 per
 > 任何人都能提交成绩并质押 MON，过了挑战期自动认证；有人质疑就进入 Commit-Reveal 匿名投票。
 > 榜首由合约维护（`bestRecordId`），成绩被撤销时**同一笔交易内**自动回退到下一名 Verified，
 > 不需要管理员改榜。已跑通：一条伪造成绩登顶后被社区 80% 投票撤销，榜首自动回退。
+>
+> 完整中文版见 [README.zh-CN.md](README.zh-CN.md)。
 
 ---
 
