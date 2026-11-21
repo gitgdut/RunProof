@@ -8,20 +8,28 @@
  *
  *   pnpm indexer:probe            # last 3000 blocks in 100-block windows
  *   PROBE_BLOCKS=10000 pnpm indexer:probe
- *   PROBE_FROM_BLOCK=81498746 PROBE_BLOCKS=200 pnpm indexer:probe
+ *   PROBE_FROM_BLOCK=81509823 PROBE_BLOCKS=200 pnpm indexer:probe
  */
 import { createPublicClient, getAddress, http } from "viem";
 import { indexedEvents } from "../src/indexer/abi";
 
 const rpcUrl = process.env.MONAD_RPC_URL ?? "https://testnet-rpc.monad.xyz";
-const client = createPublicClient({ transport: http(rpcUrl, { timeout: 25_000, retryCount: 0 }) });
+const client = createPublicClient({ transport: http(rpcUrl, { timeout: 25_000, retryCount: 2 }) });
 
 const addresses = [
-  process.env.RUNPROOF_CORE_ADDRESS ?? "0x606717FC7055B81C4290b34F9cA1E8123416b0Ab",
-  process.env.CHEAT_REGISTRY_ADDRESS ?? "0xc0df0A2342557D42D35F34913EDB28E0792Ff400",
-  process.env.GAME_REGISTRY_ADDRESS ?? "0x9906867e359F1C7d609f89f39beD4b15023601B0",
-  process.env.RECORD_NFT_ADDRESS ?? "0x2bFb2e522e51A458b6317343ea6Ef8A5E454c6EE",
+  process.env.RUNPROOF_CORE_ADDRESS ?? "0x1eb96bf618151adA2F7174CE9b8c41F45486084F",
+  process.env.CATEGORY_REGISTRY_ADDRESS ?? "0x8D3aEdd92fA2151F61877D0e844a556E4eAB91A7",
+  process.env.CHALLENGE_REASON_REGISTRY_ADDRESS ?? "0x522d2883FA6ac437F414874B9B7cEEAfAE4caC0b",
+  process.env.RECORD_NFT_ADDRESS ?? "0x967D0B53cb05BC9D6c85BEB087444e6f5a3e1360",
 ].map((value) => getAddress(value));
+
+const safe = (value: unknown) => {
+  try {
+    return JSON.parse(JSON.stringify(value ?? null, (_key, item) => (typeof item === "bigint" ? item.toString() : item)));
+  } catch {
+    return null;
+  }
+};
 
 const windowSize = BigInt(process.env.PROBE_WINDOW ?? 100);
 const span = BigInt(process.env.PROBE_BLOCKS ?? 3000);
@@ -43,7 +51,7 @@ async function main() {
       const name = String(log.eventName);
       counts.set(name, (counts.get(name) ?? 0) + 1);
       if (!samples.has(name)) {
-        samples.set(name, JSON.parse(JSON.stringify(log.args, (_key, value) => (typeof value === "bigint" ? value.toString() : value))));
+        samples.set(name, safe(log.args));
       }
     }
   }

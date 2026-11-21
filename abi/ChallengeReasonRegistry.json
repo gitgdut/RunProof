@@ -1,0 +1,225 @@
+[
+  {
+    "name": "ReasonRegistered",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "reasonId",
+        "indexed": true
+      },
+      {
+        "type": "string",
+        "name": "code"
+      },
+      {
+        "type": "string",
+        "name": "name"
+      },
+      {
+        "type": "address",
+        "name": "discoverer",
+        "indexed": true
+      }
+    ]
+  },
+  {
+    "name": "ReasonProposed",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "proposalId",
+        "indexed": true
+      },
+      {
+        "type": "address",
+        "name": "proposer",
+        "indexed": true
+      },
+      {
+        "type": "string",
+        "name": "name"
+      },
+      {
+        "type": "uint256",
+        "name": "bond"
+      },
+      {
+        "type": "uint64",
+        "name": "endTime"
+      }
+    ]
+  },
+  {
+    "name": "ReasonProposalVoted",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "proposalId",
+        "indexed": true
+      },
+      {
+        "type": "address",
+        "name": "voter",
+        "indexed": true
+      },
+      {
+        "type": "bool",
+        "name": "support"
+      },
+      {
+        "type": "uint256",
+        "name": "stake"
+      },
+      {
+        "type": "uint256",
+        "name": "power"
+      }
+    ]
+  },
+  {
+    "name": "ReasonProposalFinalized",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "proposalId",
+        "indexed": true
+      },
+      {
+        "type": "uint8",
+        "name": "status"
+      },
+      {
+        "type": "uint256",
+        "name": "reasonId"
+      }
+    ]
+  },
+  {
+    "name": "DiscovererRewarded",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "proposalId",
+        "indexed": true
+      },
+      {
+        "type": "uint256",
+        "name": "reasonId",
+        "indexed": true
+      },
+      {
+        "type": "address",
+        "name": "proposer",
+        "indexed": true
+      },
+      {
+        "type": "uint256",
+        "name": "amount"
+      }
+    ]
+  },
+  {
+    "name": "RewardFunded",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "address",
+        "name": "from",
+        "indexed": true
+      },
+      {
+        "type": "uint256",
+        "name": "amount"
+      }
+    ]
+  },
+  {
+    "name": "Withdrawn",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "address",
+        "name": "account",
+        "indexed": true
+      },
+      {
+        "type": "uint256",
+        "name": "amount"
+      }
+    ]
+  },
+  {
+    "name": "OwnershipTransferred",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "address",
+        "name": "previousOwner",
+        "indexed": true
+      },
+      {
+        "type": "address",
+        "name": "newOwner",
+        "indexed": true
+      }
+    ]
+  },
+  {
+    "name": "getReason",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "reasonId"
+      }
+    ],
+    "outputs": [
+      {
+        "type": "tuple",
+        "components": [
+          {
+            "type": "string",
+            "name": "code"
+          },
+          {
+            "type": "string",
+            "name": "name"
+          },
+          {
+            "type": "string",
+            "name": "description"
+          },
+          {
+            "type": "address",
+            "name": "discoverer"
+          },
+          {
+            "type": "uint64",
+            "name": "registeredAt"
+          },
+          {
+            "type": "bool",
+            "name": "registered"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "reasonCount",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "type": "uint256"
+      }
+    ]
+  }
+]

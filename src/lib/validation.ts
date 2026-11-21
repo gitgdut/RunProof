@@ -3,87 +3,66 @@ import { z } from "zod";
 
 export const addressSchema = z.string().refine(isAddress, "Invalid EVM address").transform((value) => getAddress(value).toLowerCase());
 export const hashSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/, "Expected a 32-byte hex hash").transform((value) => value.toLowerCase());
-export const signatureSchema = z.string().regex(/^0x[0-9a-fA-F]{130}$/, "Expected a 65-byte EIP-191 signature");
 const uintStringSchema = z.string().regex(/^\d+$/, "Expected an unsigned integer string");
-const positiveUintStringSchema = uintStringSchema.refine((value) => BigInt(value) > 0n, "Amount must be greater than zero");
+const positiveUintStringSchema = uintStringSchema.refine((value) => BigInt(value) > 0n, "Value must be greater than zero");
+const chainIdSchema = z.coerce.number().int().min(0).max(2_147_483_647);
+const positiveIdSchema = z.coerce.number().int().positive().max(2_147_483_647);
 const evidenceUriSchema = z.string().max(2048).refine((value) => /^(https?|ipfs):\/\//i.test(value), "Only http, https and ipfs URIs are allowed");
-const chainIdSchema = z.number().int().positive().max(2_147_483_647);
-const page = z.coerce.number().int().min(1).default(1);
-const limit = z.coerce.number().int().min(1).max(100).default(20);
-export const paginationSchema = z.object({ page, limit });
+
+export const offset = z.coerce.number().int().min(0).max(100_000).default(0);
+export const limit = z.coerce.number().int().min(1).max(100).default(20);
+export const paginationSchema = z.object({ offset, limit });
+
+/** Status filters accept either the chain number or the canonical name (`Verified`). */
+const statusParam = z.string().max(32).optional();
 
 export const listRecordsSchema = z.object({
-  gameId: z.coerce.number().int().positive().optional(),
-  gameMode: z.coerce.number().int().positive().optional(),
-  status: z.enum(["PENDING", "PROVISIONAL", "VERIFIED", "REVOKED"]).optional(),
-  playerAddress: addressSchema.optional(), page, limit,
+  categoryId: positiveIdSchema.optional(),
+  divisionId: positiveIdSchema.optional(),
+  status: statusParam,
+  player: addressSchema.optional(),
+  offset,
+  limit,
 });
+
 export const leaderboardSchema = z.object({
-  gameId: z.coerce.number().int().positive().default(1),
-  gameMode: z.coerce.number().int().positive().default(3),
+  categoryId: positiveIdSchema,
+  divisionId: positiveIdSchema,
+  offset,
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
+
 export const listChallengesSchema = z.object({
-  recordId: z.coerce.number().int().positive().optional(),
-  cheatId: z.coerce.number().int().positive().optional(),
+  recordId: positiveIdSchema.optional(),
+  reasonId: positiveIdSchema.optional(),
   challenger: addressSchema.optional(),
-  status: z.enum(["PENDING", "VOTING", "EVIDENCE_VOTING", "CONFIRMED", "DENIED", "INCONCLUSIVE"]).optional(), page, limit,
+  status: statusParam,
+  offset,
+  limit,
 });
-export const listVotingSchema = z.object({
-  status: z.enum(["PENDING", "VOTING", "EVIDENCE_VOTING", "CONFIRMED", "DENIED", "INCONCLUSIVE"]).optional(), page, limit,
-});
-export const listCheatsSchema = z.object({
-  status: z.enum(["ACTIVE", "INACTIVE"]).optional(), page, limit,
-});
+
+export const listVotingSchema = z.object({ status: statusParam, offset, limit });
+export const listReasonsSchema = z.object({ offset, limit });
 export const listNftsSchema = z.object({
   ownerAddress: addressSchema.optional(),
-  recordId: z.coerce.number().int().positive().optional(),
-  status: z.enum(["PROVISIONAL", "VERIFIED", "REVOKED"]).optional(), page, limit,
+  status: statusParam,
+  offset,
+  limit,
 });
+
 export const addressParamSchema = z.object({ address: addressSchema });
-export const idParamSchema = z.object({ id: z.coerce.number().int().positive().max(2_147_483_647) });
+export const idParamSchema = z.object({ id: positiveIdSchema });
 
-const signedFields = {
-  transactionHash: hashSchema,
+/** Body of POST /api/records: the backend only turns this into an unsigned transaction. */
+export const submissionPlanSchema = z.object({
+  categoryId: positiveIdSchema,
+  divisionId: positiveIdSchema,
+  value: positiveUintStringSchema,
   evidenceHash: hashSchema,
-  expiresAt: z.string().datetime(),
-  signature: signatureSchema,
-};
-
-export const createRecordSchema = z.object({
-  recordId: chainIdSchema,
-  playerAddress: addressSchema,
-  gameId: chainIdSchema,
-  gameMode: chainIdSchema,
-  score: uintStringSchema,
-  stakeAmount: positiveUintStringSchema,
   evidenceURI: evidenceUriSchema,
-  challengeDeadline: z.string().datetime(),
-  ...signedFields,
 }).strict();
 
-export const createChallengeSchema = z.object({
-  challengeId: chainIdSchema,
-  recordId: chainIdSchema,
-  cheatId: chainIdSchema,
-  challenger: addressSchema,
-  bond: positiveUintStringSchema,
-  evidenceURI: evidenceUriSchema,
-  special: z.boolean().default(false),
-  ...signedFields,
-}).strict();
+export const claimableQuerySchema = z.object({ address: addressSchema });
 
-export const createCheatSchema = z.object({
-  cheatId: chainIdSchema,
-  cheatCode: z.string().regex(/^C[0-9]{3}$/, "Cheat code must look like C001"),
-  name: z.string().min(2).max(120),
-  description: z.string().min(2).max(2000).optional(),
-  evidenceURI: evidenceUriSchema.optional(),
-  adminAddress: addressSchema,
-  expiresAt: z.string().datetime(),
-  signature: signatureSchema,
-}).strict();
-
-export type CreateRecordInput = z.infer<typeof createRecordSchema>;
-export type CreateChallengeInput = z.infer<typeof createChallengeSchema>;
-export type CreateCheatInput = z.infer<typeof createCheatSchema>;
+export type SubmissionPlanInput = z.infer<typeof submissionPlanSchema>;
+export type RecordListQuery = z.infer<typeof listRecordsSchema>;

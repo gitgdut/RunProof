@@ -9,7 +9,7 @@ export class AppError extends Error {
   }
 }
 
-export type Pagination = { page: number; limit: number; total: number; totalPages: number };
+export type Pagination = { offset: number; limit: number; total: number; hasMore: boolean };
 
 function jsonValue(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
@@ -70,6 +70,6 @@ export async function readJson(request: Request): Promise<unknown> {
   }
 }
 
-export function pageMeta(page: number, limit: number, total: number): Pagination {
-  return { page, limit, total, totalPages: Math.ceil(total / limit) };
+export function pageMeta(offset: number, limit: number, total: number): Pagination {
+  return { offset, limit, total, hasMore: offset + limit < total };
 }

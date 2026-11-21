@@ -1,0 +1,248 @@
+[
+  {
+    "name": "CategoryCreated",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "categoryId",
+        "indexed": true
+      },
+      {
+        "type": "string",
+        "name": "name"
+      },
+      {
+        "type": "string",
+        "name": "unit"
+      },
+      {
+        "type": "uint8",
+        "name": "decimals"
+      },
+      {
+        "type": "uint8",
+        "name": "direction"
+      },
+      {
+        "type": "uint32",
+        "name": "ruleVersion"
+      },
+      {
+        "type": "uint256",
+        "name": "baseStake"
+      },
+      {
+        "type": "string",
+        "name": "descriptionURI"
+      }
+    ]
+  },
+  {
+    "name": "CategoryUpdated",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "categoryId",
+        "indexed": true
+      },
+      {
+        "type": "string",
+        "name": "name"
+      },
+      {
+        "type": "string",
+        "name": "unit"
+      },
+      {
+        "type": "uint8",
+        "name": "decimals"
+      },
+      {
+        "type": "uint8",
+        "name": "direction"
+      },
+      {
+        "type": "uint32",
+        "name": "ruleVersion"
+      },
+      {
+        "type": "uint256",
+        "name": "baseStake"
+      },
+      {
+        "type": "string",
+        "name": "descriptionURI"
+      }
+    ]
+  },
+  {
+    "name": "CategoryActiveSet",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "categoryId",
+        "indexed": true
+      },
+      {
+        "type": "bool",
+        "name": "active"
+      }
+    ]
+  },
+  {
+    "name": "DivisionCreated",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "categoryId",
+        "indexed": true
+      },
+      {
+        "type": "uint256",
+        "name": "divisionId",
+        "indexed": true
+      },
+      {
+        "type": "string",
+        "name": "name"
+      }
+    ]
+  },
+  {
+    "name": "DivisionActiveSet",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "categoryId",
+        "indexed": true
+      },
+      {
+        "type": "uint256",
+        "name": "divisionId",
+        "indexed": true
+      },
+      {
+        "type": "bool",
+        "name": "active"
+      }
+    ]
+  },
+  {
+    "name": "OwnershipTransferred",
+    "type": "event",
+    "inputs": [
+      {
+        "type": "address",
+        "name": "previousOwner",
+        "indexed": true
+      },
+      {
+        "type": "address",
+        "name": "newOwner",
+        "indexed": true
+      }
+    ]
+  },
+  {
+    "name": "getCategory",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "categoryId"
+      }
+    ],
+    "outputs": [
+      {
+        "type": "tuple",
+        "components": [
+          {
+            "type": "string",
+            "name": "name"
+          },
+          {
+            "type": "string",
+            "name": "descriptionURI"
+          },
+          {
+            "type": "string",
+            "name": "unit"
+          },
+          {
+            "type": "uint8",
+            "name": "decimals"
+          },
+          {
+            "type": "uint8",
+            "name": "direction"
+          },
+          {
+            "type": "uint32",
+            "name": "ruleVersion"
+          },
+          {
+            "type": "uint256",
+            "name": "baseStake"
+          },
+          {
+            "type": "bool",
+            "name": "active"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "categoryCount",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "name": "divisionCount",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "categoryId"
+      }
+    ],
+    "outputs": [
+      {
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "name": "isDivisionActive",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "type": "uint256",
+        "name": "categoryId"
+      },
+      {
+        "type": "uint256",
+        "name": "divisionId"
+      }
+    ],
+    "outputs": [
+      {
+        "type": "bool"
+      }
+    ]
+  }
+]

@@ -1,16 +1,15 @@
-# RunProof API 使用说明
+# RunProof API（V2）
 
 Base URL：`http://localhost:3000`。
 
 约定：
 
-- 所有响应均为 JSON，时间使用 ISO 8601（链上 Unix 秒已换算），金额使用十进制 wei 字符串。
-- 链上 ID（record / challenge / cheat / game / mode / token）全部是**正整数**，不是字符串 slug。
-- 服务端不提供改变链上结果的写入口，投票、领取、撤销、铸造都必须由前端直连合约。
+- 所有 `uint256`（成绩值、质押、奖励、余额）都用**十进制字符串**返回，避免超过 2^53 丢精度。
+- 时间同时给 ISO 字符串与 Unix 秒（`*Seconds`），链上是秒。
+- 链上 ID 都是正整数：`categoryId`、`divisionId`、`recordId`、`challengeId`、`reasonId`、`tokenId`。
+- 后端只读：除 `POST /api/records` 返回未签名交易外，没有任何写接口。
 
 ## 统一响应
-
-成功：
 
 ```json
 {
@@ -18,8 +17,8 @@ Base URL：`http://localhost:3000`。
   "data": { "items": [] },
   "meta": {
     "requestId": "uuid",
-    "timestamp": "2026-11-21T05:00:00.000Z",
-    "pagination": { "page": 1, "limit": 20, "total": 0, "totalPages": 0 }
+    "timestamp": "2026-11-21T02:05:00.000Z",
+    "pagination": { "offset": 0, "limit": 20, "total": 42, "hasMore": true }
   }
 }
 ```
@@ -27,246 +26,277 @@ Base URL：`http://localhost:3000`。
 失败：
 
 ```json
-{
-  "success": false,
-  "error": { "code": "VALIDATION_ERROR", "message": "Request validation failed", "details": {} },
-  "meta": { "requestId": "uuid", "timestamp": "2026-11-21T05:00:00.000Z" }
-}
+{ "success": false, "error": { "code": "NOT_FOUND", "message": "Record 99 not found" }, "meta": { "requestId": "uuid", "timestamp": "..." } }
 ```
 
-列表接口的 `data` 为 `{ "items": [...] }`，分页信息在 `meta.pagination`。详情接口的 `data` 直接是对象。列表默认 `page=1&limit=20`，最大 `limit=100`。
-
-错误码：
-
-| HTTP | code | 触发场景 |
-| --- | --- | --- |
-| 400 | `VALIDATION_ERROR` | Zod 校验失败，`details.fieldErrors` 给出字段 |
-| 400 | `INVALID_JSON` | 请求体不是合法 JSON |
-| 400 | `UNSUPPORTED_GAME_MODE` | GameRegistry 中该 `gameId + modeId` 不存在或未激活 |
-| 400 | `INVALID_CHEAT` | `cheatId` 不存在或不是 `ACTIVE` |
-| 401 | `INVALID_SIGNATURE` | 签名者与声明钱包不一致 |
-| 401 | `SIGNATURE_EXPIRED` | `expiresAt` 已过期 |
-| 400 | `SIGNATURE_WINDOW_TOO_LONG` | `expiresAt` 超出 `AUTH_MAX_SIGNATURE_AGE_SECONDS` |
-| 403 | `NOT_REGISTRY_ADMIN` | 不在 `CHEAT_REGISTRY_ADMIN_ADDRESSES` 白名单 |
-| 404 | `NOT_FOUND` | 资源不存在 |
-| 409 | `DUPLICATE_RESOURCE` | ID / 交易 Hash / 证据 Hash 重复 |
-| 409 | `CHAIN_RECORD_REQUIRED` | 记录尚未被索引器确认，不能创建挑战 |
-| 409 | `CHALLENGE_CLOSED` | 记录状态或挑战期不允许挑战 |
-| 409 | `SPECIAL_CHALLENGE_NOT_ELIGIBLE` | 特殊挑战要求记录已 `VERIFIED` |
-| 502 | `CHAIN_READ_FAILED` | 链上只读调用失败 |
-| 503 | `CHAIN_NOT_CONFIGURED` | 缺少 RPC 或合约地址配置 |
-| 503 | `DATABASE_UNAVAILABLE` | `DATA_MODE=prisma` 但数据库不可用或未迁移 |
-| 500 | `INTERNAL_ERROR` | 未预期异常 |
+列表默认 `offset=0&limit=20`，`limit` 上限 100（榜单默认 50）。详情返回对象。
 
 ## 端点
 
-| 方法 | 路径 | 查询参数 / 说明 |
+| 方法 | 路径 | 参数 / 说明 |
 | --- | --- | --- |
-| GET | `/api/health` | 服务状态；`prisma` 模式会真实探测数据库 |
-| GET | `/api/games` | 游戏与模式列表（来自 `GameRegistered` / `ModeRegistered`） |
-| GET | `/api/games/:id` | 单个游戏及其模式、作弊类型 |
-| GET | `/api/records` | `gameId`、`gameMode`、`status`、`playerAddress`、分页 |
-| GET | `/api/records/:id` | 记录 + 游戏 + 玩家 + 挑战（含轮次/票/证据）+ NFT + 奖励 + 资金流水 |
-| POST | `/api/records` | 预登记已上链的记录，需要玩家签名 |
-| GET | `/api/leaderboard` | `gameId`（默认 1）、`gameMode`（默认 3）、`limit`（默认 50）；只统计 `VERIFIED` |
-| GET | `/api/challenges` | `recordId`、`cheatId`、`challenger`、`status`、分页 |
-| GET | `/api/challenges/:id` | 挑战、记录、作弊类型、轮次、投票明细、证据 |
-| POST | `/api/challenges` | 预登记已上链的挑战，需要挑战者签名 |
-| GET | `/api/voting` | 默认返回 `PENDING`/`VOTING`/`EVIDENCE_VOTING`，可用 `status` 覆盖 |
-| GET | `/api/voting/:id` | 挑战详情 + 当前轮 + 投票汇总 |
-| GET | `/api/cheats` | `status`（`ACTIVE`/`INACTIVE`）、分页 |
-| GET | `/api/cheats/:id` | 作弊类型详情 |
-| POST | `/api/cheats` | 缓存作弊类型元数据，需要白名单管理员签名 |
-| GET | `/api/users/:address` | 用户资料与各类计数 |
-| GET | `/api/users/:address/records` | 该玩家记录，分页 |
-| GET | `/api/users/:address/votes` | 该地址投票（含挑战摘要），分页 |
-| GET | `/api/users/:address/rewards` | 奖励流水，分页 |
-| GET | `/api/users/:address/stakes` | 质押返还/罚没流水，分页 |
-| GET | `/api/users/:address/claimable` | 实时读取 Core 与 CheatRegistry 的 `claimable`，**不落库** |
-| GET | `/api/users/:address/nfts` | 该地址持有的 NFT，分页 |
-| GET | `/api/nfts` | `ownerAddress`、`recordId`、`status`、分页 |
-| GET | `/api/nfts/:id` | NFT 索引详情（tokenId == recordId） |
+| GET | `/api/categories` | 全部分类及 division |
+| GET | `/api/categories/:categoryId` | 单个分类 |
+| GET | `/api/leaderboard` | `categoryId`、`divisionId`（必填）、`offset`、`limit` |
+| GET | `/api/records` | `categoryId`、`divisionId`、`status`、`player`、`offset`、`limit` |
+| GET | `/api/records/:recordId` | 成绩 + 分类 + 挑战（含轮次/票/证据）+ NFT + 奖励 + 资金流水 |
+| POST | `/api/records` | 返回未签名的 `submitRecord` 交易参数（不落库、不签名） |
+| GET | `/api/challenges` | `recordId`、`reasonId`、`challenger`、`status` |
+| GET | `/api/challenges/:challengeId` | 挑战 + 当前轮 + 两轮明细 + 汇总 |
+| GET | `/api/voting` | 默认仅 `Voting`/`EvidenceVoting`，可用 `status` 覆盖 |
+| GET | `/api/voting/:challengeId` | 同上，并附协议阈值（`minVoters`、`quorumPower` 等） |
+| GET | `/api/reasons` | 挑战理由（V1 的 `/api/cheats`） |
+| GET | `/api/reasons/:reasonId` | 单个理由 |
+| GET | `/api/users/:address` | 概览：成绩/挑战/投票/奖励/质押/NFT 数量 + 实时可提余额 |
+| GET | `/api/users/:address/records` | 该玩家成绩 |
+| GET | `/api/users/:address/votes` | 该地址投票（含所属挑战摘要） |
+| GET | `/api/users/:address/rewards` | 奖励流水 |
+| GET | `/api/users/:address/stakes` | 质押返还/罚没流水 + 提现记录 |
+| GET | `/api/users/:address/nfts` | 持有 NFT |
+| GET | `/api/users/:address/claimable` | 实时读 `claimable(address)`（core + reason registry） |
+| GET | `/api/nfts` | `ownerAddress`、`status` |
+| GET | `/api/nfts/:tokenId` | NFT 详情（tokenId == recordId） |
+| GET | `/api/health` | 索引高度、落后块数、最近一次对账结果 |
 
-### 状态枚举
+`status` 过滤既接受链上数值也接受名称：`status=2` 与 `status=Verified` 等价（`Voting`、`Confirmed`、`Revoked`…）。写错名称返回 `400 INVALID_STATUS`。
 
-- Record：`PENDING`（仅 API 预登记，链上还没有该记录）、`PROVISIONAL`、`VERIFIED`、`REVOKED`
-- Challenge：`PENDING`、`VOTING`、`EVIDENCE_VOTING`、`CONFIRMED`、`DENIED`、`INCONCLUSIVE`
-- Vote：`votingChoice` 在 reveal 前为 `null`；`revealed`、`claimed` 为布尔；`round` 区分 0=作弊判定、1=证据充分性
-- Cheat：`ACTIVE`、`INACTIVE`
-- NFT：`PROVISIONAL`、`VERIFIED`、`REVOKED`
-
-## 查询示例
-
-```bash
-curl "http://localhost:3000/api/records?gameId=1&gameMode=3&status=VERIFIED&page=1&limit=20"
-curl "http://localhost:3000/api/games/1"
-curl "http://localhost:3000/api/leaderboard?gameId=1&gameMode=3&limit=10"
-curl "http://localhost:3000/api/users/0x1000000000000000000000000000000000000001/rewards"
-curl "http://localhost:3000/api/users/0x1000000000000000000000000000000000000001/claimable"
-```
-
-排行榜响应：
+## 分类
 
 ```json
+GET /api/categories
 {
   "success": true,
   "data": {
-    "gameId": 1,
-    "gameMode": 3,
     "items": [
-      { "rank": 1, "id": 1, "playerAddress": "0x1000...0001", "score": "125430", "evidenceURI": "ipfs://runproof/records/1", "submittedAt": "2026-11-20T08:00:00.000Z", "transactionHash": "0x1111..." }
+      {
+        "categoryId": 4,
+        "name": "Minecraft Any%",
+        "descriptionURI": "ipfs://runproof-rules/mc-any-v1",
+        "unit": "ms",
+        "decimals": 0,
+        "direction": 2,
+        "directionName": "LowerIsBetter",
+        "ruleVersion": 1,
+        "baseStake": "50000000000000000",
+        "active": true,
+        "divisions": [
+          { "divisionId": 1, "name": "Java", "active": true },
+          { "divisionId": 2, "name": "Bedrock", "active": true }
+        ]
+      }
     ]
   }
 }
 ```
 
-投票接口在挑战对象上追加 `currentRound` 与 `summary`：
+## 榜单
+
+```json
+GET /api/leaderboard?categoryId=4&divisionId=1
+{
+  "success": true,
+  "data": {
+    "categoryId": 4,
+    "divisionId": 1,
+    "categoryName": "Minecraft Any%",
+    "divisionName": "Java",
+    "unit": "ms",
+    "decimals": 0,
+    "direction": 2,
+    "directionName": "LowerIsBetter",
+    "chainBest": { "recordId": 1, "value": "1152345", "displayValue": "19:12.345" },
+    "total": 3,
+    "entries": [
+      {
+        "rank": 1, "recordId": 1, "player": "0x0d64…32e7",
+        "value": "1152345", "displayValue": "19:12.345",
+        "direction": 2, "directionName": "LowerIsBetter",
+        "statusCode": 2, "status": "Verified",
+        "stake": "100000000000000000",
+        "evidenceURI": "ipfs://runproof-evidence/mc-java-19m12s345",
+        "submittedAt": "2026-11-21T02:04:57.000Z", "submittedAtSeconds": 1795244697,
+        "transactionHash": "0x…", "blockNumber": "81509860", "logIndex": 1
+      }
+    ]
+  }
+}
+```
+
+排序规则（后端唯一实现）：
+
+1. `status = Verified(2)`
+2. `direction=1` 按 `value` 降序；`direction=2` 按 `value` 升序
+3. 同值 → `submittedAt` 更早优先
+4. 仍相同 → `recordId` 更小优先
+
+`chainBest` 来自 `LeaderboardUpdated` 事件 + 每轮 `bestRecordId()` 对账；验收时它必须等于链上 `bestRecordId(categoryId, divisionId)`，也应等于 `entries[0].recordId`（`offset=0` 时）。
+
+`displayValue` 由后端按 `unit` + `decimals` 格式化，前端不要再算一遍：
+
+| 原始值 | unit | decimals | displayValue |
+| --- | --- | --- | --- |
+| `1152345` | `ms` | 0 | `19:12.345` |
+| `9845` | `ms` | 0 | `00:09.845` |
+| `1432` | `cps` | 2 | `14.32` |
+| `1200` | `cps` | 2 | `12` |
+| `25` | `reps` | 0 | `25` |
+
+## 成绩
+
+```bash
+curl "http://localhost:3000/api/records?categoryId=5&divisionId=1&status=Verified"
+curl "http://localhost:3000/api/records/1"
+```
+
+列表项包含 `recordId/player/value/displayValue/direction/status/evidenceURI/stake/submittedAt(+秒)/transactionHash/blockNumber/logIndex`；详情额外带 `category`、`challenges`、`nft`、`rewards`、`stakeFlows`。
+
+### POST /api/records（返回未签名交易）
+
+职责边界：校验参数、读链上 `requiredPayment`/`requiredStake`、确认分类与 division 可用，然后返回 `submitRecord` 的调用参数。**不落库、不签名、不广播。**
+
+请求：
 
 ```json
 {
-  "id": 1,
-  "round": 0,
-  "status": "VOTING",
-  "currentRound": { "challengeId": 1, "round": 0, "confirmPower": "1000", "denyPower": "0", "finalized": false },
-  "summary": {
+  "categoryId": 4,
+  "divisionId": 1,
+  "value": "1152345",
+  "evidenceHash": "0x<32 bytes>",
+  "evidenceURI": "ipfs://<CID>"
+}
+```
+
+响应：
+
+```json
+{
+  "success": true,
+  "data": {
+    "chainId": 10143,
+    "to": "0x1eb96bf618151adA2F7174CE9b8c41F45486084F",
+    "functionName": "submitRecord",
+    "args": ["4", "1", "1152345", "0x…", "ipfs://…"],
+    "data": "0x…",
+    "value": "60000000000000000",
+    "requiredStake": "50000000000000000",
+    "submissionFee": "10000000000000000",
+    "category": { "categoryId": 4, "divisionId": 1, "name": "Minecraft Any%", "unit": "ms", "decimals": 0, "direction": 2, "ruleVersion": 1, "baseStake": "50000000000000000" },
+    "displayValue": "19:12.345"
+  }
+}
+```
+
+前端用钱包签名并发送该交易，成功后等索引器写入 `RecordSubmitted`（状态 `Provisional`）。金额一律以链上返回值为准，不要缓存。
+
+错误：`400 DIVISION_INACTIVE`、`400 CATEGORY_INACTIVE`、`400 VALIDATION_ERROR`、`502 CHAIN_READ_FAILED`（RPC 不可用）。
+
+## 挑战与投票
+
+```json
+GET /api/voting/1
+{
+  "success": true,
+  "data": {
+    "challengeId": 1,
+    "recordId": 9,
+    "reasonId": 1,
+    "reason": { "code": "R001", "name": "Fabricated Evidence" },
+    "challenger": "0x2000…0002",
+    "bond": "500000000000000000",
+    "reserved": "1000000000000000000",
+    "statusCode": 3,
+    "status": "Confirmed",
     "round": 0,
-    "totalVotes": 2,
-    "revealedVoters": 1,
-    "totalStake": "200000000000000000",
-    "confirmPower": "1000",
-    "denyPower": "0",
-    "confirmVotes": 1,
-    "denyVotes": 0
-  },
-  "votes": []
+    "currentRound": {
+      "round": 0,
+      "commitEnd": "2026-11-21T02:05:30.000Z", "commitEndSeconds": 1795245930,
+      "revealEnd": "2026-11-21T02:06:00.000Z", "revealEndSeconds": 1795245960,
+      "confirmPower": "400", "denyPower": "100",
+      "confirmStake": "400000000000000000", "denyStake": "100000000000000000",
+      "committedStake": "500000000000000000",
+      "committedVoters": 5, "revealedVoters": 5,
+      "finalized": true, "winnerCode": 1, "winner": "Confirm", "winnerPower": "400",
+      "rewardPool": "430000000000000000", "slashBps": 3000
+    },
+    "special": true,
+    "extended": true,
+    "evidenceCount": 1,
+    "summary": { "round": 0, "totalVotes": 5, "committedVoters": 5, "revealedVoters": 5, "totalStake": "500000000000000000", "confirmPower": "400", "denyPower": "100", "confirmVotes": 4, "denyVotes": 1 },
+    "thresholds": { "minVoters": 3, "quorumPower": "300", "approvalBps": 7500, "minVoteStake": "50000000000000000", "maxVoteStake": "5000000000000000000", "chainId": 10143 },
+    "votes": [], "evidence": [], "rounds": []
+  }
 }
 ```
 
-`summary` 只统计当前轮的票；`confirmPower` / `denyPower` 来自 `VoteRevealed` 的 `power`，未 reveal 的票不计入。
+`thresholds` 从 `params()` 读取并缓存 60 秒；RPC 不可用时为 `null`，其余字段照常返回。
 
-`/api/users/:address/claimable` 响应：
+前端按钮条件（与合约阶段一致）：
+
+| 条件 | 动作 |
+| --- | --- |
+| `now < commitEnd` | `commitVote`；当事人可 `submitEvidence` |
+| `commitEnd <= now < revealEnd` | 已 commit 者可 `revealVote` |
+| `now >= revealEnd && !finalized` | 任意地址可 `finalizeVoting` |
+| 已结算且投过票、`claimed=false` | `claimVote` |
+| `claimable > 0` | `withdraw` |
+
+投票是 commit-reveal 两步：`commitment` 必须用链上 `hashVote(challengeId, round, choice, salt, voter)` 计算，`salt` 由前端持久化；`round` 变化后旧 commitment 失效。证据充分性轮（`round=1`）中 `Choice` 语义为 Evidence Sufficient / Evidence Required。
+
+## 用户
 
 ```json
+GET /api/users/0x1000000000000000000000000000000000000001
 {
-  "walletAddress": "0x1000...0001",
-  "chainId": 10143,
-  "coreClaimable": "0",
-  "cheatRegistryClaimable": "0",
-  "totalClaimable": "0"
+  "success": true,
+  "data": {
+    "address": "0x1000…0001",
+    "known": true,
+    "stats": { "records": 2, "challenges": 0, "votes": 1, "rewards": 0, "stakes": 0, "nfts": 1 },
+    "claimable": { "walletAddress": "0x1000…0001", "chainId": 10143, "coreClaimable": "0", "reasonRegistryClaimable": "0", "totalClaimable": "0" }
+  }
 }
 ```
 
-该接口在 `DATA_MODE=mock` 下同样要求配置 `MONAD_RPC_URL` 与合约地址，否则返回 `503 CHAIN_NOT_CONFIGURED`。
+`claimable` 实时读合约；RPC 不可用时该字段为 `null`，但统计照常返回。需要严格金额时用 `/api/users/:address/claimable`（读不到直接 `502`，不会返回假数据）。
 
-## 签名写接口
-
-三个 POST 接口都使用 EIP-191 `personal_sign`（viem `signMessage`）。`expiresAt` 必须是 ISO 8601 未来时间，且距服务端当前时间不超过 `AUTH_MAX_SIGNATURE_AGE_SECONDS`（默认 300 秒）。消息逐行拼接、`\n` 连接、**不带末尾换行**；地址与哈希在消息中使用小写形式。
-
-### POST /api/records
-
-请求字段（`.strict()`，多余字段直接 400）：
+## 健康检查
 
 ```json
+GET /api/health
 {
-  "recordId": 42,
-  "playerAddress": "0x1000000000000000000000000000000000000001",
-  "gameId": 1,
-  "gameMode": 3,
-  "score": "132000",
-  "stakeAmount": "1000000000000000000",
-  "evidenceURI": "ipfs://<CID>",
-  "evidenceHash": "0x<64 hex chars>",
-  "challengeDeadline": "2026-11-21T06:10:00.000Z",
-  "transactionHash": "0x<64 hex chars>",
-  "expiresAt": "2026-11-21T06:00:00.000Z",
-  "signature": "0x<130 hex chars>"
+  "success": true,
+  "data": {
+    "service": "runproof-api",
+    "status": "ok",
+    "dataMode": "prisma",
+    "database": "connected",
+    "chain": { "chainId": 10143, "head": "81521785" },
+    "indexer": { "indexedBlock": "81521780", "indexedBlockHash": "0x…", "lastSyncedAt": "2026-11-21T08:00:00.000Z", "lagBlocks": "5" },
+    "lastReconcile": { "ranAt": "2026-11-21T08:00:00.000Z", "ok": true, "checkedBoards": 5, "mismatches": [], "lagBlocks": "5" }
+  }
 }
 ```
 
-待签名消息：
+`status` 为 `lagging` 表示落后超过 100 块；`lastReconcile.mismatches` 非空说明库内指针与 `bestRecordId` 不一致（已按链上修正并记录）。
 
-```text
-RunProof: Index submitted record v2
-Chain ID: 10143
-Record ID: 42
-Player: 0x1000000000000000000000000000000000000001
-Game ID: 1
-Mode ID: 3
-Score: 132000
-Stake (wei): 1000000000000000000
-Evidence hash: 0x<lowercase hash>
-Evidence URI: ipfs://<CID>
-Deadline: 2026-11-21T06:10:00.000Z
-Transaction: 0x<lowercase hash>
-Expires: 2026-11-21T06:00:00.000Z
-```
+## 错误码
 
-要求与行为：
-
-- `recordId`、`score`、`stakeAmount`、`challengeDeadline` 必须与链上 `RecordSubmitted` 事件一致；服务端不计算质押，也不参考 `requiredPayment`。
-- `gameId + gameMode` 必须存在于 GameRegistry 索引且模式为激活状态，否则 `400 UNSUPPORTED_GAME_MODE`。
-- 记录落库状态固定为 `PENDING`，`indexedAt` 为空。索引器读到 `RecordSubmitted` 后写入真实区块信息并改为 `PROVISIONAL`（或链上已推进的状态）。
-- `recordId`、`transactionHash`、`evidenceHash` 任一重复返回 `409 DUPLICATE_RESOURCE`。
-- 客户端不能指定 `status`、`gameVersion`、`ruleVersion`，这些由索引器按链上事件写入。
-
-### POST /api/challenges
-
-字段：`challengeId`、`recordId`、`cheatId`、`challenger`、`bond`、`evidenceURI`、`evidenceHash`、`special`、`transactionHash`、`expiresAt`、`signature`。
-
-```text
-RunProof: Index submitted challenge v2
-Chain ID: 10143
-Challenge ID: 7
-Record ID: 42
-Cheat ID: 3
-Challenger: 0x3000000000000000000000000000000000000003
-Bond (wei): 500000000000000000
-Special: false
-Evidence hash: 0x<lowercase hash>
-Evidence URI: ipfs://<CID>
-Transaction: 0x<lowercase hash>
-Expires: 2026-11-21T06:00:00.000Z
-```
-
-要求与行为：
-
-- 记录必须已被索引器确认（`indexedAt` 非空），否则 `409 CHAIN_RECORD_REQUIRED`。
-- `cheatId` 必须存在且为 `ACTIVE`，否则 `400 INVALID_CHEAT`。
-- 普通挑战（`special=false`）：记录必须 `PROVISIONAL` 且未过 `challengeDeadline`；否则 `409 CHALLENGE_CLOSED`。
-- 特殊挑战（`special=true`）：记录必须 `VERIFIED`；否则 `409 SPECIAL_CHALLENGE_NOT_ELIGIBLE`。保证金由合约按 5 倍校验，后端只记录事件中的 `bond`。
-- 挑战落库状态固定为 `PENDING`，等待 `ChallengeCreated` 事件补全 `round`、`reserved`、`commitEnd` 等字段。
-
-### POST /api/cheats
-
-字段：`cheatId`、`cheatCode`（`C001` 形式）、`name`、`description?`、`evidenceURI?`、`adminAddress`、`expiresAt`、`signature`。
-
-```text
-RunProof: Cache cheat metadata v2
-Chain ID: 10143
-Cheat ID: 6
-Admin: 0xa00000000000000000000000000000000000000a
-Code: C006
-Name: Save File Editing
-Description: Editing local save data to skip progression.
-Evidence URI: ipfs://runproof/cheats/C006
-Expires: 2026-11-21T06:00:00.000Z
-```
-
-`description` 与 `evidenceURI` 省略时对应行保留为 `Description: ` / `Evidence URI: `（空值，不删行）。管理员地址来自 `CHEAT_REGISTRY_ADMIN_ADDRESSES`（逗号分隔），非白名单地址返回 `403`。该接口只缓存元数据，链上注册仍以 `CheatRegistered` 事件为准；同名/同码由合约保证唯一。
-
-## 前端对接注意事项
-
-- 提交成绩前先读 `requiredPayment(gameId, mode, score)` 作为 `msg.value`，不要复用本 API 的 `stakeAmount` 作为付款依据。
-- 投票是 commit-reveal 两步，`commitment` 必须用链上 `hashVote(challengeId, round, choice, salt, voter)` 计算，`salt` 由前端持久化；`round` 变化后旧 commitment 失效。
-- 所有资金展示以 `claimable(address)` 为准，配合 `claimVote` / `withdraw` 完成提现。
-- NFT 状态用 `verificationStatus(tokenId)` 实时读取，成绩撤销后 NFT 仍存在但状态为 Revoked。
+| HTTP | code | 场景 |
+| --- | --- | --- |
+| 400 | `VALIDATION_ERROR` | Zod 校验失败（附 `details.fieldErrors`） |
+| 400 | `INVALID_JSON` | 请求体不是 JSON |
+| 400 | `INVALID_STATUS` | `status` 既不是数字也不是已知名称 |
+| 400 | `DIVISION_INACTIVE` / `CATEGORY_INACTIVE` | 该榜不接受提交 |
+| 404 | `NOT_FOUND` | 资源不存在 |
+| 502 | `CHAIN_READ_FAILED` | 链上只读调用失败 |
+| 503 | `DATABASE_UNAVAILABLE` | `DATA_MODE=prisma` 但库不可用或未迁移 |
+| 500 | `INTERNAL_ERROR` | 未预期异常 |
 
 ## 演示数据
 
-Mock / Seed 包含 4 个用户、Tetris（`gameId=1`，模式 1 Classic / 2 Sprint / 3 Marathon）、5 个作弊类型（C001–C005）、4 条不同状态的记录（`VERIFIED` / `PROVISIONAL` / `REVOKED`）、2 个挑战（含 2 个轮次）、2 张票（其中一张未 reveal）、证据、奖励、质押流水与 1 个 NFT。
+`DATA_MODE=mock` 与 `pnpm db:seed` 的数据一致：
 
-演示地址：
-
-- 玩家：`0x1000000000000000000000000000000000000001`（Alice，记录 1，分数 125430，排行榜第 1）
-- 挑战者：`0x2000000000000000000000000000000000000002`（Bob，挑战 1，状态 `VOTING`）
-- 投票者：Alice 已 reveal（`CONFIRM`），Dave 仅 commit（`votingChoice` 为 `null`）
+- 分类：1 100m Sprint（ms，越低越好）、2 Pull-ups（reps）、3 Tetris Score（points，3 个 division）、4 Minecraft Any%（ms，Java/Bedrock）、5 Click Speed（cps，2 位小数）
+- 成绩 1–8 已 Verified，9 已 Revoked（对应挑战 1 `Confirmed`，理由 R001）
+- 理由 R001–R005；NFT tokenId 1、6、9
+- 演示玩家：`0x1000000000000000000000000000000000000001`；挑战者：`0x2000000000000000000000000000000000000002`

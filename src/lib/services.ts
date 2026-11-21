@@ -1,451 +1,706 @@
-import { randomUUID } from "crypto";
 import type { Prisma } from "@prisma/client";
 import { AppError, pageMeta } from "./api";
 import { prisma } from "./db";
+import * as demo from "./demo-data";
 import {
-  demoChallengeRounds, demoChallenges, demoCheats, demoEvidence, demoGameModes, demoGames,
-  demoNfts, demoRecords, demoRewards, demoStakeFlows, demoUsers, demoVotes,
-} from "./demo-data";
+  challengeStatusName, choiceName, directionName, parseChallengeStatus, parseRecordStatus,
+  recordStatusName, rewardKindName, stakeKindName,
+} from "./enums";
+import { formatValue } from "./format";
+import { getChainParams, getChainHead, getClaimable } from "./chain";
 
-type MockRow = Record<string, any>;
-type MockDb = {
-  users: MockRow[]; games: MockRow[]; gameModes: MockRow[]; cheats: MockRow[]; records: MockRow[];
-  challenges: MockRow[]; challengeRounds: MockRow[]; votes: MockRow[]; evidence: MockRow[];
-  rewards: MockRow[]; stakeFlows: MockRow[]; nfts: MockRow[];
-};
-const globalForMock = globalThis as unknown as { runProofMock?: MockDb };
-function createMockDb(): MockDb {
-  return structuredClone({
-    users: demoUsers, games: demoGames, gameModes: demoGameModes, cheats: demoCheats, records: demoRecords,
-    challenges: demoChallenges, challengeRounds: demoChallengeRounds, votes: demoVotes, evidence: demoEvidence,
-    rewards: demoRewards, stakeFlows: demoStakeFlows, nfts: demoNfts,
-  });
-}
-function mockDb() {
-  globalForMock.runProofMock ??= createMockDb();
-  return globalForMock.runProofMock;
-}
+// Rows come from mixed sources (Prisma models with includes, in-memory fixtures).
+type AnyRow = any;
 const isMock = () => process.env.DATA_MODE === "mock";
-const skip = (page: number, limit: number) => (page - 1) * limit;
+const toDate = (value: string | Date) => (value instanceof Date ? value : new Date(value));
+const iso = (value: string | Date) => toDate(value).toISOString();
+const seconds = (value: string | Date) => Math.floor(toDate(value).getTime() / 1000);
+const decimal = (value: unknown) => (value === null || value === undefined ? "0" : String(value));
+const sortedDesc = (rows: AnyRow[], key: string) => [...rows].sort((a, b) => toDate(b[key]).getTime() - toDate(a[key]).getTime());
 
-type ListResult<T> = { items: T[]; pagination: ReturnType<typeof pageMeta> };
-function mockPage<T>(rows: T[], page: number, limit: number): ListResult<T> {
-  return { items: rows.slice(skip(page, limit), skip(page, limit) + limit), pagination: pageMeta(page, limit, rows.length) };
-}
-function notFound(resource: string): never {
-  throw new AppError(404, "NOT_FOUND", `${resource} not found`);
-}
-function maxRound(rounds: MockRow[]) {
-  return rounds.reduce<MockRow | null>((latest, round) => !latest || round.round > latest.round ? round : latest, null);
-}
-function mockGame(gameId: number) {
-  const db = mockDb();
-  const game = db.games.find((item) => item.id === gameId);
-  return game ? { ...game, modes: db.gameModes.filter((mode) => mode.gameId === gameId) } : undefined;
-}
-function mockChallenge(challenge: MockRow) {
-  const db = mockDb();
-  return {
-    ...challenge,
-    round: Number(challenge.round ?? 0),
-    record: db.records.find((record) => record.id === challenge.recordId),
-    cheat: db.cheats.find((cheat) => cheat.id === challenge.cheatId),
-    rounds: db.challengeRounds.filter((round) => round.challengeId === challenge.id).sort((a, b) => a.round - b.round),
-    votes: db.votes.filter((vote) => vote.challengeId === challenge.id),
-    evidence: db.evidence.filter((item) => item.challengeId === challenge.id),
-  };
-}
-function mockRecord(record: MockRow) {
-  const db = mockDb();
-  return {
-    ...record,
-    game: mockGame(record.gameId),
-    player: db.users.find((user) => user.walletAddress === record.playerAddress),
-    challenges: db.challenges.filter((challenge) => challenge.recordId === record.id).map(mockChallenge),
-    nft: db.nfts.find((nft) => nft.recordId === record.id) ?? null,
-    rewards: db.rewards.filter((reward) => reward.recordId === record.id),
-    stakeFlows: db.stakeFlows.filter((flow) => flow.recordId === record.id),
-  };
+function statusFilter(value: string | undefined, parser: (input: string) => number | undefined, label: string) {
+  if (!value) return undefined;
+  const parsed = parser(value);
+  if (parsed === undefined) throw new AppError(400, "INVALID_STATUS", `Unknown ${label} status: ${value}`);
+  return parsed;
 }
 
-export async function listRecords(query: { gameId?: number; gameMode?: number; status?: "PENDING" | "PROVISIONAL" | "VERIFIED" | "REVOKED"; playerAddress?: string; page: number; limit: number }) {
+function slice<T>(rows: T[], offset: number, limit: number) {
+  return { items: rows.slice(offset, offset + limit), pagination: pageMeta(offset, limit, rows.length) };
+}
+
+// --------------------------------------------------------------------------- categories
+
+const mockCategory = (category: AnyRow) => ({
+  categoryId: category.id,
+  name: category.name,
+  descriptionURI: category.descriptionURI,
+  unit: category.unit,
+  decimals: category.decimals,
+  direction: category.direction,
+  directionName: directionName(category.direction),
+  ruleVersion: category.ruleVersion,
+  baseStake: category.baseStake,
+  active: category.active,
+  divisions: demo.demoDivisions
+    .filter((division) => division.categoryId === category.id)
+    .map((division) => ({ divisionId: division.divisionId, name: division.name, active: division.active })),
+});
+
+const prismaCategory = (category: AnyRow) => ({
+  categoryId: category.id,
+  name: category.name,
+  descriptionURI: category.descriptionURI,
+  unit: category.unit,
+  decimals: category.decimals,
+  direction: category.direction,
+  directionName: directionName(category.direction),
+  ruleVersion: category.ruleVersion,
+  baseStake: decimal(category.baseStake),
+  active: category.active,
+  divisions: (category.divisions ?? []).map((division: AnyRow) => ({
+    divisionId: division.divisionId, name: division.name, active: division.active,
+  })),
+});
+
+export async function listCategories() {
+  if (isMock()) return { items: demo.demoCategories.map(mockCategory) };
+  const rows = await prisma.category.findMany({ include: { divisions: { orderBy: { divisionId: "asc" } } }, orderBy: { id: "asc" } });
+  return { items: rows.map(prismaCategory) };
+}
+
+export async function getCategory(categoryId: number) {
   if (isMock()) {
-    const rows = mockDb().records
-      .filter((record) => (!query.gameId || record.gameId === query.gameId) && (!query.gameMode || record.gameMode === query.gameMode) && (!query.status || record.status === query.status) && (!query.playerAddress || record.playerAddress === query.playerAddress))
-      .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
-    const result = mockPage(rows, query.page, query.limit);
-    return { ...result, items: result.items.map((record) => ({ ...record, game: mockGame(record.gameId) })) };
+    const category = demo.demoCategories.find((item) => item.id === categoryId);
+    if (!category) throw new AppError(404, "NOT_FOUND", `Category ${categoryId} not found`);
+    return mockCategory(category);
   }
-  const where: Prisma.RecordWhereInput = { gameId: query.gameId, gameMode: query.gameMode, status: query.status, playerAddress: query.playerAddress };
-  const [total, items] = await prisma.$transaction([
-    prisma.record.count({ where }),
-    prisma.record.findMany({ where, include: { game: { include: { modes: true } } }, orderBy: { submittedAt: "desc" }, skip: skip(query.page, query.limit), take: query.limit }),
-  ]);
-  return { items, pagination: pageMeta(query.page, query.limit, total) };
+  const category = await prisma.category.findUnique({ where: { id: categoryId }, include: { divisions: { orderBy: { divisionId: "asc" } } } });
+  if (!category) throw new AppError(404, "NOT_FOUND", `Category ${categoryId} not found`);
+  return prismaCategory(category);
 }
 
-export async function getRecord(recordId: number) {
+// ------------------------------------------------------------------------------ reasons
+
+const reasonView = (reason: AnyRow) => ({
+  reasonId: reason.id,
+  code: reason.code,
+  name: reason.name,
+  description: reason.description ?? null,
+  discoverer: reason.discovererAddress ?? null,
+  registeredAt: reason.registeredAt ? iso(reason.registeredAt) : null,
+  registered: reason.registered,
+});
+
+export async function listReasons(query: { offset: number; limit: number }) {
+  if (isMock()) return slice(demo.demoReasons.map(reasonView), query.offset, query.limit);
+  const [total, rows] = await prisma.$transaction([
+    prisma.challengeReason.count(),
+    prisma.challengeReason.findMany({ orderBy: { id: "asc" }, skip: query.offset, take: query.limit }),
+  ]);
+  return { items: rows.map(reasonView), pagination: pageMeta(query.offset, query.limit, total) };
+}
+
+export async function getReason(reasonId: number) {
+  const reason = isMock()
+    ? demo.demoReasons.find((item) => item.id === reasonId)
+    : await prisma.challengeReason.findUnique({ where: { id: reasonId } });
+  if (!reason) throw new AppError(404, "NOT_FOUND", `Reason ${reasonId} not found`);
+  return reasonView(reason);
+}
+
+// ------------------------------------------------------------------------------ records
+
+type CategoryInfo = { unit: string; decimals: number; direction: number; name: string };
+
+function recordView(record: AnyRow, category?: CategoryInfo) {
+  const unit = category?.unit ?? "";
+  const decimals = category?.decimals ?? 0;
+  const value = decimal(record.value);
+  return {
+    recordId: record.id,
+    player: record.player,
+    categoryId: record.categoryId,
+    divisionId: record.divisionId,
+    value,
+    displayValue: formatValue(value, unit, decimals),
+    direction: record.direction,
+    directionName: directionName(record.direction),
+    statusCode: record.status,
+    status: recordStatusName(record.status),
+    evidenceHash: record.evidenceHash,
+    evidenceURI: record.evidenceURI,
+    stake: decimal(record.stake),
+    ruleVersion: record.ruleVersion,
+    stakeSettled: Boolean(record.stakeSettled),
+    activeChallenges: Number(record.activeChallenges ?? 0),
+    submittedAt: iso(record.submittedAt),
+    submittedAtSeconds: seconds(record.submittedAt),
+    deadline: iso(record.deadline),
+    deadlineSeconds: seconds(record.deadline),
+    transactionHash: record.transactionHash,
+    blockNumber: record.blockNumber === null || record.blockNumber === undefined ? null : String(record.blockNumber),
+    logIndex: record.logIndex,
+  };
+}
+
+export async function listRecords(query: {
+  categoryId?: number; divisionId?: number; status?: string; player?: string; offset: number; limit: number;
+}) {
+  const status = statusFilter(query.status, parseRecordStatus, "record");
   if (isMock()) {
-    const record = mockDb().records.find((item) => item.id === recordId);
-    if (!record) notFound("Record");
-    return mockRecord(record);
+    const rows = demo.demoRecords
+      .filter((record) =>
+        (query.categoryId === undefined || record.categoryId === query.categoryId)
+        && (query.divisionId === undefined || record.divisionId === query.divisionId)
+        && (status === undefined || record.status === status)
+        && (!query.player || record.player === query.player))
+      .sort((a, b) => toDate(b.submittedAt).getTime() - toDate(a.submittedAt).getTime());
+    const page = slice(rows, query.offset, query.limit);
+    return {
+      items: page.items.map((record) => recordView(record, demo.demoCategories.find((item) => item.id === record.categoryId))),
+      pagination: page.pagination,
+    };
+  }
+  const where: Prisma.RecordWhereInput = {
+    categoryId: query.categoryId, divisionId: query.divisionId, status, player: query.player,
+  };
+  const [total, rows] = await prisma.$transaction([
+    prisma.record.count({ where }),
+    prisma.record.findMany({
+      where, include: { category: true }, orderBy: { submittedAt: "desc" }, skip: query.offset, take: query.limit,
+    }),
+  ]);
+  return { items: rows.map((row) => recordView(row, row.category as unknown as CategoryInfo)), pagination: pageMeta(query.offset, query.limit, total) };
+}
+
+export async function getRecordDetail(recordId: number) {
+  if (isMock()) {
+    const record = demo.demoRecords.find((item) => item.id === recordId);
+    if (!record) throw new AppError(404, "NOT_FOUND", `Record ${recordId} not found`);
+    const category = demo.demoCategories.find((item) => item.id === record.categoryId);
+    const challenges = demo.demoChallenges.filter((challenge) => challenge.recordId === recordId).map((challenge) => challengeView(challenge));
+    return {
+      ...recordView(record, category),
+      category: category ? { categoryId: category.id, name: category.name, unit: category.unit, decimals: category.decimals, direction: category.direction } : null,
+      challenges,
+      nft: demo.demoNfts.find((nft) => nft.recordId === recordId) ?? null,
+      rewards: demo.demoRewards.filter((reward) => reward.recordId === recordId).map(rewardView),
+      stakeFlows: demo.demoStakeFlows.filter((flow) => flow.recordId === recordId).map(stakeFlowView),
+    };
   }
   const record = await prisma.record.findUnique({
     where: { id: recordId },
     include: {
-      game: { include: { modes: true } }, player: true,
-      challenges: { include: { cheat: true, rounds: true, votes: true, evidence: true } },
+      category: true,
+      challenges: { include: { reason: true, rounds: true, votes: true, evidence: true }, orderBy: { createdAt: "desc" } },
       nft: true, rewards: true, stakeFlows: true,
     },
   });
-  if (!record) notFound("Record");
-  return record;
+  if (!record) throw new AppError(404, "NOT_FOUND", `Record ${recordId} not found`);
+  return {
+    ...recordView(record, record.category as unknown as CategoryInfo),
+    category: { categoryId: record.category.id, name: record.category.name, unit: record.category.unit, decimals: record.category.decimals, direction: record.category.direction },
+    challenges: record.challenges.map((challenge) => challengeView(challenge)),
+    nft: record.nft ? nftView(record.nft) : null,
+    rewards: record.rewards.map(rewardView),
+    stakeFlows: record.stakeFlows.map(stakeFlowView),
+  };
 }
 
-export async function createRecord(input: {
-  recordId: number; playerAddress: string; gameId: number; gameMode: number; score: string; stakeAmount: string;
-  evidenceHash: string; evidenceURI: string; challengeDeadline: string; transactionHash: string;
-}) {
-  if (isMock()) {
-    const db = mockDb();
-    const game = db.games.find((item) => item.id === input.gameId);
-    if (!game) notFound("Game");
-    const mode = db.gameModes.find((item) => item.gameId === input.gameId && item.modeId === input.gameMode);
-    if (!mode || !mode.active) throw new AppError(400, "UNSUPPORTED_GAME_MODE", "Game mode is not active in GameRegistry");
-    if (db.records.some((record) => record.id === input.recordId || record.transactionHash === input.transactionHash || record.evidenceHash === input.evidenceHash)) {
-      throw new AppError(409, "DUPLICATE_RESOURCE", "Record ID, transaction or evidence has already been submitted");
-    }
-    if (!db.users.some((user) => user.walletAddress === input.playerAddress)) db.users.push({ id: `user_${randomUUID()}`, walletAddress: input.playerAddress, createdAt: new Date().toISOString() });
-    const now = new Date().toISOString();
-    db.records.push({
-      id: input.recordId, ...input, score: BigInt(input.score), status: "PENDING", gameVersion: game.gameVersion,
-      ruleVersion: game.ruleVersion, stakeSettled: false, activeChallenges: 0, logIndex: 0, blockNumber: null,
-      indexedAt: null, createdAt: now, updatedAt: now,
-    });
-    return getRecord(input.recordId);
-  }
-  return prisma.$transaction(async (tx) => {
-    const game = await tx.game.findUnique({ where: { id: input.gameId }, include: { modes: true } });
-    if (!game) notFound("Game");
-    if (!game.modes.some((mode) => mode.modeId === input.gameMode && mode.active)) throw new AppError(400, "UNSUPPORTED_GAME_MODE", "Game mode is not active in GameRegistry");
-    await tx.user.upsert({ where: { walletAddress: input.playerAddress }, update: {}, create: { walletAddress: input.playerAddress } });
-    await tx.record.create({
-      data: {
-        id: input.recordId, playerAddress: input.playerAddress, gameId: input.gameId, gameMode: input.gameMode,
-        score: BigInt(input.score), stakeAmount: input.stakeAmount, evidenceHash: input.evidenceHash, evidenceURI: input.evidenceURI,
-        status: "PENDING", submittedAt: new Date(), challengeDeadline: new Date(input.challengeDeadline),
-        gameVersion: game.gameVersion, ruleVersion: game.ruleVersion, transactionHash: input.transactionHash,
-      },
-    });
-    return tx.record.findUniqueOrThrow({
-      where: { id: input.recordId },
-      include: { game: { include: { modes: true } }, player: true, challenges: { include: { cheat: true, rounds: true, votes: true, evidence: true } }, nft: true, rewards: true, stakeFlows: true },
-    });
-  });
-}
+// -------------------------------------------------------------------------- leaderboard
 
-export async function getLeaderboard(query: { gameId: number; gameMode: number; limit: number }) {
-  if (isMock()) {
-    const rows = mockDb().records
-      .filter((record) => record.gameId === query.gameId && record.gameMode === query.gameMode && record.status === "VERIFIED")
-      .sort((a, b) => a.score === b.score ? a.submittedAt.localeCompare(b.submittedAt) : a.score > b.score ? -1 : 1)
-      .slice(0, query.limit)
-      .map((record, index) => ({ rank: index + 1, id: record.id, playerAddress: record.playerAddress, score: record.score, evidenceURI: record.evidenceURI, submittedAt: record.submittedAt, transactionHash: record.transactionHash }));
-    return { gameId: query.gameId, gameMode: query.gameMode, items: rows };
-  }
-  const rows = await prisma.record.findMany({
-    where: { gameId: query.gameId, gameMode: query.gameMode, status: "VERIFIED" },
-    select: { id: true, playerAddress: true, score: true, evidenceURI: true, submittedAt: true, transactionHash: true },
-    orderBy: [{ score: "desc" }, { submittedAt: "asc" }], take: query.limit,
-  });
-  return { gameId: query.gameId, gameMode: query.gameMode, items: rows.map((row, index) => ({ rank: index + 1, ...row })) };
-}
+export async function getLeaderboard(query: { categoryId: number; divisionId: number; offset: number; limit: number }) {
+  const category = isMock()
+    ? demo.demoCategories.find((item) => item.id === query.categoryId)
+    : await prisma.category.findUnique({ where: { id: query.categoryId }, include: { divisions: { orderBy: { divisionId: "asc" } } } });
+  if (!category) throw new AppError(404, "NOT_FOUND", `Category ${query.categoryId} not found`);
 
-export async function listChallenges(query: {
-  recordId?: number; cheatId?: number; challenger?: string;
-  status?: "PENDING" | "VOTING" | "EVIDENCE_VOTING" | "CONFIRMED" | "DENIED" | "INCONCLUSIVE"; page: number; limit: number;
-}) {
+  const division = isMock()
+    ? demo.demoDivisions.find((item) => item.categoryId === query.categoryId && item.divisionId === query.divisionId)
+    : (category as AnyRow).divisions?.find((item: AnyRow) => item.divisionId === query.divisionId);
+  if (!division) throw new AppError(404, "NOT_FOUND", `Division ${query.divisionId} not found in category ${query.categoryId}`);
+
+  const info = { unit: category.unit, decimals: category.decimals, direction: category.direction, name: category.name };
+  const order = category.direction === 2 ? "asc" : "desc";
+
+  const build = (records: AnyRow[]) => records
+    .sort((a, b) => {
+      const left = BigInt(decimal(a.value));
+      const right = BigInt(decimal(b.value));
+      if (left !== right) return category.direction === 2 ? (left < right ? -1 : 1) : (left > right ? -1 : 1);
+      const byTime = toDate(a.submittedAt).getTime() - toDate(b.submittedAt).getTime();
+      return byTime !== 0 ? byTime : a.id - b.id;
+    });
+
   if (isMock()) {
-    const rows = mockDb().challenges
-      .filter((challenge) => (!query.recordId || challenge.recordId === query.recordId) && (!query.cheatId || challenge.cheatId === query.cheatId) && (!query.challenger || challenge.challenger === query.challenger) && (!query.status || challenge.status === query.status))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const result = mockPage(rows, query.page, query.limit);
-    return { ...result, items: result.items.map(mockChallenge) };
+    const verified = demo.demoRecords.filter((record) =>
+      record.categoryId === query.categoryId && record.divisionId === query.divisionId && record.status === 2);
+    const ordered = build(verified);
+    const board = demo.demoLeaderboards.find((item) => item.categoryId === query.categoryId && item.divisionId === query.divisionId);
+    return {
+      categoryId: query.categoryId, divisionId: query.divisionId, categoryName: category.name, divisionName: division.name,
+      unit: info.unit, decimals: info.decimals, direction: info.direction, directionName: directionName(info.direction),
+      chainBest: board ? { recordId: board.bestRecordId, value: board.bestValue, displayValue: formatValue(board.bestValue, info.unit, info.decimals) } : null,
+      total: ordered.length,
+      entries: ordered.slice(query.offset, query.offset + query.limit).map((record, index) => ({
+        rank: query.offset + index + 1,
+        ...recordView(record, info),
+      })),
+      pagination: pageMeta(query.offset, query.limit, ordered.length),
+    };
   }
-  const where: Prisma.ChallengeWhereInput = { recordId: query.recordId, cheatId: query.cheatId, challenger: query.challenger, status: query.status };
-  const [total, items] = await prisma.$transaction([
-    prisma.challenge.count({ where }),
-    prisma.challenge.findMany({
-      where, include: { record: true, cheat: true, rounds: true, votes: true, evidence: true },
-      orderBy: { createdAt: "desc" }, skip: skip(query.page, query.limit), take: query.limit,
+
+  const where: Prisma.RecordWhereInput = { categoryId: query.categoryId, divisionId: query.divisionId, status: 2 };
+  const [total, rows, board] = await prisma.$transaction([
+    prisma.record.count({ where }),
+    prisma.record.findMany({
+      where, orderBy: [{ value: order }, { submittedAt: "asc" }, { id: "asc" }], skip: query.offset, take: query.limit,
     }),
+    prisma.leaderboard.findUnique({ where: { categoryId_divisionId: { categoryId: query.categoryId, divisionId: query.divisionId } } }),
   ]);
-  return { items, pagination: pageMeta(query.page, query.limit, total) };
+  return {
+    categoryId: query.categoryId, divisionId: query.divisionId, categoryName: category.name, divisionName: division.name,
+    unit: info.unit, decimals: info.decimals, direction: info.direction, directionName: directionName(info.direction),
+    chainBest: board ? {
+      recordId: board.bestRecordId, value: decimal(board.bestValue),
+      displayValue: formatValue(decimal(board.bestValue), info.unit, info.decimals),
+    } : null,
+    total,
+    entries: rows.map((row, index) => ({ rank: query.offset + index + 1, ...recordView(row, info) })),
+    pagination: pageMeta(query.offset, query.limit, total),
+  };
 }
 
-export async function getChallenge(challengeId: number) {
-  if (isMock()) {
-    const challenge = mockDb().challenges.find((item) => item.id === challengeId);
-    if (!challenge) notFound("Challenge");
-    return mockChallenge(challenge);
-  }
-  const challenge = await prisma.challenge.findUnique({
-    where: { id: challengeId },
-    include: { record: true, cheat: true, rounds: { orderBy: { round: "asc" } }, votes: { orderBy: { createdAt: "desc" } }, evidence: { orderBy: { createdAt: "asc" } } },
-  });
-  if (!challenge) notFound("Challenge");
-  return challenge;
+// --------------------------------------------------------------------------- challenges
+
+export function challengeView(challenge: AnyRow) {
+  const rounds = (challenge.rounds ?? demo.demoChallengeRounds.filter((round) => round.challengeId === challenge.id))
+    .slice()
+    .sort((a: AnyRow, b: AnyRow) => a.round - b.round);
+  const currentRound = rounds.find((round: AnyRow) => round.round === challenge.round) ?? rounds[rounds.length - 1] ?? null;
+  const votes = challenge.votes ?? demo.demoVotes.filter((vote) => vote.challengeId === challenge.id);
+  const evidence = challenge.evidence ?? demo.demoEvidence.filter((item) => item.challengeId === challenge.id);
+  const reason = challenge.reason ?? demo.demoReasons.find((item) => item.id === challenge.reasonId);
+
+  return {
+    challengeId: challenge.id,
+    recordId: challenge.recordId,
+    reasonId: challenge.reasonId,
+    reason: reason ? { code: reason.code, name: reason.name } : null,
+    challenger: challenge.challenger,
+    bond: decimal(challenge.bond),
+    reserved: decimal(challenge.reserved),
+    evidenceHash: challenge.evidenceHash,
+    evidenceURI: challenge.evidenceURI,
+    statusCode: challenge.status,
+    status: challengeStatusName(challenge.status),
+    round: challenge.round,
+    currentRound: currentRound ? roundView(currentRound) : null,
+    special: Boolean(challenge.special),
+    extended: Boolean(challenge.extended),
+    evidenceCount: Number(challenge.evidenceCount ?? 0),
+    createdAt: iso(challenge.createdAt),
+    createdAtSeconds: seconds(challenge.createdAt),
+    transactionHash: challenge.transactionHash,
+    blockNumber: challenge.blockNumber === null || challenge.blockNumber === undefined ? null : String(challenge.blockNumber),
+    logIndex: challenge.logIndex,
+    summary: summarize(votes, challenge.round),
+    votes: votes.map(voteView),
+    evidence: evidence.map(evidenceView),
+    rounds: rounds.map(roundView),
+  };
 }
 
-export async function createChallenge(input: {
-  challengeId: number; recordId: number; cheatId: number; challenger: string; bond: string;
-  evidenceHash: string; evidenceURI: string; special: boolean; transactionHash: string;
-}) {
-  if (isMock()) {
-    const db = mockDb();
-    const record = db.records.find((item) => item.id === input.recordId);
-    if (!record) notFound("Record");
-    if (!record.indexedAt) throw new AppError(409, "CHAIN_RECORD_REQUIRED", "Record must be confirmed on-chain before it can be challenged");
-    const cheat = db.cheats.find((item) => item.id === input.cheatId);
-    if (!cheat || cheat.status !== "ACTIVE") throw new AppError(400, "INVALID_CHEAT", "Cheat must be active in CheatRegistry");
-    if (!["PROVISIONAL", "VERIFIED"].includes(record.status)) throw new AppError(409, "CHALLENGE_CLOSED", "Record status does not accept challenges");
-    if (!input.special && (record.status !== "PROVISIONAL" || Date.parse(record.challengeDeadline) <= Date.now())) throw new AppError(409, "CHALLENGE_CLOSED", "Normal challenge window is closed; use a special challenge when eligible");
-    if (input.special && record.status !== "VERIFIED") throw new AppError(409, "SPECIAL_CHALLENGE_NOT_ELIGIBLE", "Special challenges require a Verified record");
-    if (db.challenges.some((challenge) => challenge.id === input.challengeId || challenge.transactionHash === input.transactionHash || challenge.evidenceHash === input.evidenceHash)) throw new AppError(409, "DUPLICATE_RESOURCE", "Challenge ID, transaction or evidence has already been used");
-    if (!db.users.some((user) => user.walletAddress === input.challenger)) db.users.push({ id: `user_${randomUUID()}`, walletAddress: input.challenger, createdAt: new Date().toISOString() });
-    db.challenges.push({
-      id: input.challengeId, recordId: input.recordId, cheatId: input.cheatId, challenger: input.challenger,
-      bond: input.bond, evidenceHash: input.evidenceHash, evidenceURI: input.evidenceURI, transactionHash: input.transactionHash,
-      special: input.special, reserved: "0", status: "PENDING", round: 0, extended: false,
-      evidenceCount: 0, createdAt: new Date().toISOString(), logIndex: 0, blockNumber: null, indexedAt: null,
-    });
-    record.activeChallenges = Number(record.activeChallenges ?? 0) + 1;
-    return getChallenge(input.challengeId);
-  }
-  return prisma.$transaction(async (tx) => {
-    const record = await tx.record.findUnique({ where: { id: input.recordId } });
-    if (!record) notFound("Record");
-    if (!record.indexedAt) throw new AppError(409, "CHAIN_RECORD_REQUIRED", "Record must be confirmed on-chain before it can be challenged");
-    const cheat = await tx.cheat.findUnique({ where: { id: input.cheatId } });
-    if (!cheat || cheat.status !== "ACTIVE") throw new AppError(400, "INVALID_CHEAT", "Cheat must be active in CheatRegistry");
-    if (!["PROVISIONAL", "VERIFIED"].includes(record.status)) throw new AppError(409, "CHALLENGE_CLOSED", "Record status does not accept challenges");
-    if (!input.special && (record.status !== "PROVISIONAL" || record.challengeDeadline <= new Date())) throw new AppError(409, "CHALLENGE_CLOSED", "Normal challenge window is closed; use a special challenge when eligible");
-    if (input.special && record.status !== "VERIFIED") throw new AppError(409, "SPECIAL_CHALLENGE_NOT_ELIGIBLE", "Special challenges require a Verified record");
-    await tx.user.upsert({ where: { walletAddress: input.challenger }, update: {}, create: { walletAddress: input.challenger } });
-    await tx.challenge.create({
-      data: {
-        id: input.challengeId, recordId: input.recordId, cheatId: input.cheatId, challenger: input.challenger,
-        bond: input.bond, evidenceHash: input.evidenceHash, evidenceURI: input.evidenceURI, status: "PENDING",
-        special: input.special, transactionHash: input.transactionHash, createdAt: new Date(),
-      },
-    });
-    await tx.record.update({ where: { id: input.recordId }, data: { activeChallenges: { increment: 1 } } });
-    return tx.challenge.findUniqueOrThrow({
-      where: { id: input.challengeId },
-      include: { record: true, cheat: true, rounds: true, votes: true, evidence: true },
-    });
-  });
+function roundView(round: AnyRow) {
+  return {
+    round: round.round,
+    commitEnd: round.commitEnd ? iso(round.commitEnd) : null,
+    commitEndSeconds: round.commitEnd ? seconds(round.commitEnd) : null,
+    revealEnd: round.revealEnd ? iso(round.revealEnd) : null,
+    revealEndSeconds: round.revealEnd ? seconds(round.revealEnd) : null,
+    confirmPower: decimal(round.confirmPower),
+    denyPower: decimal(round.denyPower),
+    confirmStake: decimal(round.confirmStake),
+    denyStake: decimal(round.denyStake),
+    committedStake: decimal(round.committedStake),
+    committedVoters: Number(round.committedVoters ?? 0),
+    revealedVoters: Number(round.revealedVoters ?? 0),
+    finalized: Boolean(round.finalized),
+    winnerCode: round.winner ?? null,
+    winner: choiceName(round.winner),
+    winnerPower: decimal(round.winnerPower),
+    rewardPool: decimal(round.rewardPool),
+    slashBps: Number(round.slashBps ?? 0),
+  };
 }
 
-type VoteLike = { round: number; stakeAmount: { toString(): string } | string; votingPower?: bigint | null; votingChoice?: string | null; revealed?: boolean };
-function votingSummary(votes: Array<VoteLike | MockRow>, round: number | null) {
-  const scoped = votes.filter((vote) => round === null || Number(vote.round) === round);
+function summarize(votes: AnyRow[], round: number) {
+  const scoped = votes.filter((vote) => Number(vote.round) === round);
+  const sum = (rows: AnyRow[], pick: (row: AnyRow) => unknown) => rows.reduce((total, row) => total + BigInt(decimal(pick(row))), 0n).toString();
   return {
     round,
     totalVotes: scoped.length,
-    revealedVoters: scoped.filter((vote) => vote.revealed !== false).length,
-    totalStake: scoped.reduce((sum, vote) => sum + BigInt(vote.stakeAmount.toString()), 0n).toString(),
-    confirmPower: scoped.filter((vote) => vote.votingChoice === "CONFIRM").reduce((sum, vote) => sum + BigInt(vote.votingPower ?? 0), 0n).toString(),
-    denyPower: scoped.filter((vote) => vote.votingChoice === "DENY").reduce((sum, vote) => sum + BigInt(vote.votingPower ?? 0), 0n).toString(),
-    confirmVotes: scoped.filter((vote) => vote.votingChoice === "CONFIRM").length,
-    denyVotes: scoped.filter((vote) => vote.votingChoice === "DENY").length,
+    committedVoters: scoped.length,
+    revealedVoters: scoped.filter((vote) => vote.revealed).length,
+    totalStake: sum(scoped, (vote) => vote.stakeAmount),
+    confirmPower: sum(scoped.filter((vote) => vote.votingChoice === 1), (vote) => vote.votingPower),
+    denyPower: sum(scoped.filter((vote) => vote.votingChoice === 2), (vote) => vote.votingPower),
+    confirmVotes: scoped.filter((vote) => vote.votingChoice === 1).length,
+    denyVotes: scoped.filter((vote) => vote.votingChoice === 2).length,
   };
 }
-function withVotingSummary<T extends { votes: any[]; rounds: any[]; round?: number }>(challenge: T) {
-  const currentRound = challenge.rounds.find((round) => round.round === challenge.round) ?? maxRound(challenge.rounds);
-  return { ...challenge, currentRound, summary: votingSummary(challenge.votes, currentRound?.round ?? null) };
+
+function voteView(vote: AnyRow) {
+  return {
+    challengeId: vote.challengeId,
+    round: vote.round,
+    voter: vote.voterAddress,
+    choiceCode: vote.votingChoice ?? null,
+    choice: choiceName(vote.votingChoice),
+    stakeAmount: decimal(vote.stakeAmount),
+    votingPower: vote.votingPower === null || vote.votingPower === undefined ? null : decimal(vote.votingPower),
+    commitHash: vote.commitHash ?? null,
+    commitTransactionHash: vote.commitTransactionHash ?? null,
+    revealTransactionHash: vote.revealTransactionHash ?? null,
+    revealed: Boolean(vote.revealed),
+    claimed: Boolean(vote.claimed),
+    createdAt: iso(vote.createdAt),
+  };
 }
 
-export async function listVoting(query: { status?: "PENDING" | "VOTING" | "EVIDENCE_VOTING" | "CONFIRMED" | "DENIED" | "INCONCLUSIVE"; page: number; limit: number }) {
-  const statuses = query.status ? [query.status] : ["PENDING", "VOTING", "EVIDENCE_VOTING"];
+function evidenceView(item: AnyRow) {
+  return {
+    challengeId: item.challengeId, round: item.round, submitter: item.submitter, evidenceHash: item.evidenceHash,
+    evidenceURI: item.evidenceURI, transactionHash: item.transactionHash, logIndex: item.logIndex, createdAt: iso(item.createdAt),
+  };
+}
+
+export async function listChallenges(query: {
+  recordId?: number; reasonId?: number; challenger?: string; status?: string; offset: number; limit: number;
+}) {
+  const status = statusFilter(query.status, parseChallengeStatus, "challenge");
   if (isMock()) {
-    const rows = mockDb().challenges.filter((challenge) => statuses.includes(challenge.status)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const result = mockPage(rows, query.page, query.limit);
-    return { ...result, items: result.items.map((challenge) => withVotingSummary(mockChallenge(challenge))) };
+    const rows = sortedDesc(
+      demo.demoChallenges.filter((challenge) =>
+        (query.recordId === undefined || challenge.recordId === query.recordId)
+        && (query.reasonId === undefined || challenge.reasonId === query.reasonId)
+        && (!query.challenger || challenge.challenger === query.challenger)
+        && (status === undefined || challenge.status === status)),
+      "createdAt",
+    );
+    const page = slice(rows, query.offset, query.limit);
+    return { items: page.items.map(challengeView), pagination: page.pagination };
   }
-  const where: Prisma.ChallengeWhereInput = { status: { in: statuses as any } };
+  const where: Prisma.ChallengeWhereInput = { recordId: query.recordId, reasonId: query.reasonId, challenger: query.challenger, status };
   const [total, rows] = await prisma.$transaction([
     prisma.challenge.count({ where }),
-    prisma.challenge.findMany({ where, include: { record: true, cheat: true, rounds: true, votes: true, evidence: true }, orderBy: { createdAt: "desc" }, skip: skip(query.page, query.limit), take: query.limit }),
+    prisma.challenge.findMany({
+      where, include: { reason: true, rounds: true, votes: true, evidence: true },
+      orderBy: { createdAt: "desc" }, skip: query.offset, take: query.limit,
+    }),
   ]);
-  return { items: rows.map(withVotingSummary), pagination: pageMeta(query.page, query.limit, total) };
+  return { items: rows.map(challengeView), pagination: pageMeta(query.offset, query.limit, total) };
 }
 
-export async function getVoting(challengeId: number) {
-  return withVotingSummary(await getChallenge(challengeId));
-}
-
-export async function listCheats(query: { status?: "ACTIVE" | "INACTIVE"; page: number; limit: number }) {
+export async function getChallengeDetail(challengeId: number) {
   if (isMock()) {
-    const rows = mockDb().cheats.filter((cheat) => !query.status || cheat.status === query.status);
-    return mockPage(rows, query.page, query.limit);
+    const challenge = demo.demoChallenges.find((item) => item.id === challengeId);
+    if (!challenge) throw new AppError(404, "NOT_FOUND", `Challenge ${challengeId} not found`);
+    return challengeView(challenge);
   }
-  const where: Prisma.CheatWhereInput = { status: query.status };
-  const [total, items] = await prisma.$transaction([
-    prisma.cheat.count({ where }),
-    prisma.cheat.findMany({ where, orderBy: { id: "asc" }, skip: skip(query.page, query.limit), take: query.limit }),
-  ]);
-  return { items, pagination: pageMeta(query.page, query.limit, total) };
-}
-
-export async function getCheat(cheatId: number) {
-  if (isMock()) {
-    const cheat = mockDb().cheats.find((item) => item.id === cheatId);
-    if (!cheat) notFound("Cheat");
-    return cheat;
-  }
-  const cheat = await prisma.cheat.findUnique({ where: { id: cheatId } });
-  if (!cheat) notFound("Cheat");
-  return cheat;
-}
-
-export async function createCheat(input: { cheatId: number; cheatCode: string; name: string; description?: string; evidenceURI?: string }) {
-  if (isMock()) {
-    const db = mockDb();
-    const existing = db.cheats.find((cheat) => cheat.id === input.cheatId);
-    const now = new Date().toISOString();
-    if (existing) {
-      Object.assign(existing, input, { status: "ACTIVE", updatedAt: now });
-      return existing;
-    }
-    const cheat = { ...input, description: input.description ?? null, evidenceURI: input.evidenceURI ?? null, discovererAddress: null, status: "ACTIVE", gameId: null, createdAt: now, updatedAt: now };
-    db.cheats.push(cheat);
-    return cheat;
-  }
-  const { cheatId, ...data } = input;
-  return prisma.cheat.upsert({
-    where: { id: cheatId },
-    update: { ...data, status: "ACTIVE" },
-    create: { id: cheatId, ...data, status: "ACTIVE" },
+  const challenge = await prisma.challenge.findUnique({
+    where: { id: challengeId },
+    include: {
+      reason: true, rounds: { orderBy: { round: "asc" } },
+      votes: { orderBy: { createdAt: "asc" } }, evidence: { orderBy: { createdAt: "asc" } },
+    },
   });
+  if (!challenge) throw new AppError(404, "NOT_FOUND", `Challenge ${challengeId} not found`);
+  return challengeView(challenge);
+}
+
+// ------------------------------------------------------------------------------- voting
+
+const OPEN_STATUSES = [1, 2];
+
+export async function listVoting(query: { status?: string; offset: number; limit: number }) {
+  const status = statusFilter(query.status, parseChallengeStatus, "challenge");
+  const statuses = status === undefined ? OPEN_STATUSES : [status];
+  if (isMock()) {
+    const rows = sortedDesc(demo.demoChallenges.filter((challenge) => statuses.includes(challenge.status)), "createdAt");
+    const page = slice(rows, query.offset, query.limit);
+    return { items: page.items.map(challengeView), pagination: page.pagination };
+  }
+  const where: Prisma.ChallengeWhereInput = { status: { in: statuses } };
+  const [total, rows] = await prisma.$transaction([
+    prisma.challenge.count({ where }),
+    prisma.challenge.findMany({
+      where, include: { reason: true, rounds: true, votes: true, evidence: true },
+      orderBy: { createdAt: "desc" }, skip: query.offset, take: query.limit,
+    }),
+  ]);
+  return { items: rows.map(challengeView), pagination: pageMeta(query.offset, query.limit, total) };
+}
+
+/** Thresholds the frontend needs to render voting buttons; read from the contract once a minute. */
+async function votingThresholds() {
+  try {
+    const params = await getChainParams();
+    return {
+      minVoters: params.minVoters,
+      quorumPower: params.quorumPower.toString(),
+      approvalBps: params.approvalBps,
+      minVoteStake: params.minVoteStake.toString(),
+      maxVoteStake: params.maxVoteStake.toString(),
+      chainId: Number(process.env.MONAD_CHAIN_ID ?? 10143),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getVotingDetail(challengeId: number) {
+  const challenge = await getChallengeDetail(challengeId);
+  return { ...challenge, thresholds: await votingThresholds() };
+}
+
+// --------------------------------------------------------------------------- user views
+
+function rewardView(reward: AnyRow) {
+  return {
+    source: reward.source,
+    recordId: reward.recordId ?? null,
+    reasonId: reward.reasonId ?? null,
+    challengeId: reward.challengeId ?? null,
+    proposalId: reward.proposalId ?? null,
+    wallet: reward.walletAddress,
+    amount: decimal(reward.amount),
+    kindCode: reward.kind ?? null,
+    kind: rewardKindName(reward.kind ?? null),
+    transactionHash: reward.transactionHash,
+    logIndex: reward.logIndex,
+    createdAt: iso(reward.createdAt),
+  };
+}
+
+function stakeFlowView(flow: AnyRow) {
+  return {
+    flow: flow.flow,
+    recordId: flow.recordId ?? null,
+    reasonId: flow.reasonId ?? null,
+    challengeId: flow.challengeId ?? null,
+    wallet: flow.walletAddress,
+    amount: decimal(flow.amount),
+    kindCode: flow.kind,
+    kind: stakeKindName(flow.kind),
+    transactionHash: flow.transactionHash,
+    logIndex: flow.logIndex,
+    createdAt: iso(flow.createdAt),
+  };
+}
+
+function nftView(nft: AnyRow) {
+  return {
+    tokenId: nft.id,
+    recordId: nft.recordId,
+    owner: nft.ownerAddress,
+    statusCode: nft.status,
+    status: recordStatusName(nft.status),
+    transactionHash: nft.transactionHash,
+    logIndex: nft.logIndex,
+    createdAt: iso(nft.createdAt),
+  };
 }
 
 export async function getUser(address: string) {
+  const stats = isMock()
+    ? {
+      records: demo.demoRecords.filter((row) => row.player === address).length,
+      challenges: demo.demoChallenges.filter((row) => row.challenger === address).length,
+      votes: demo.demoVotes.filter((row) => row.voterAddress === address).length,
+      rewards: demo.demoRewards.filter((row) => row.walletAddress === address).length,
+      stakes: demo.demoStakeFlows.filter((row) => row.walletAddress === address).length,
+      nfts: demo.demoNfts.filter((row) => row.ownerAddress === address).length,
+    }
+    : await (async () => {
+      const [records, challenges, votes, rewards, stakes, nfts] = await prisma.$transaction([
+        prisma.record.count({ where: { player: address } }),
+        prisma.challenge.count({ where: { challenger: address } }),
+        prisma.vote.count({ where: { voterAddress: address } }),
+        prisma.reward.count({ where: { walletAddress: address } }),
+        prisma.stakeFlow.count({ where: { walletAddress: address } }),
+        prisma.nFT.count({ where: { ownerAddress: address } }),
+      ]);
+      return { records, challenges, votes, rewards, stakes, nfts };
+    })();
+
+  let claimable: Awaited<ReturnType<typeof getClaimable>> | null = null;
+  try {
+    claimable = await getClaimable(address);
+  } catch {
+    claimable = null;
+  }
+
+  return {
+    address,
+    stats,
+    claimable,
+    known: stats.records + stats.votes + stats.rewards + stats.nfts > 0,
+  };
+}
+
+export async function getUserRecords(address: string, query: { offset: number; limit: number }) {
+  return listRecords({ player: address, offset: query.offset, limit: query.limit });
+}
+
+export async function getUserVotes(address: string, query: { offset: number; limit: number }) {
   if (isMock()) {
-    const db = mockDb();
-    const user = db.users.find((item) => item.walletAddress === address);
-    if (!user) notFound("User");
+    const rows = sortedDesc(demo.demoVotes.filter((vote) => vote.voterAddress === address), "createdAt");
+    const page = slice(rows, query.offset, query.limit);
     return {
-      ...user,
-      stats: {
-        recordCount: db.records.filter((item) => item.playerAddress === address).length,
-        challengeCount: db.challenges.filter((item) => item.challenger === address).length,
-        voteCount: db.votes.filter((item) => item.voterAddress === address).length,
-        rewardCount: db.rewards.filter((item) => item.walletAddress === address).length,
-        stakeFlowCount: db.stakeFlows.filter((item) => item.walletAddress === address).length,
-        nftCount: db.nfts.filter((item) => item.ownerAddress === address).length,
-      },
+      items: page.items.map((vote) => ({
+        ...voteView(vote),
+        challenge: (() => {
+          const challenge = demo.demoChallenges.find((item) => item.id === vote.challengeId);
+          return challenge ? { challengeId: challenge.id, recordId: challenge.recordId, status: challengeStatusName(challenge.status) } : null;
+        })(),
+      })),
+      pagination: page.pagination,
     };
   }
-  const user = await prisma.user.findUnique({ where: { walletAddress: address } });
-  if (!user) notFound("User");
-  const [recordCount, challengeCount, voteCount, rewardCount, stakeFlowCount, nftCount] = await prisma.$transaction([
-    prisma.record.count({ where: { playerAddress: address } }),
-    prisma.challenge.count({ where: { challenger: address } }),
-    prisma.vote.count({ where: { voterAddress: address } }),
-    prisma.reward.count({ where: { walletAddress: address } }),
-    prisma.stakeFlow.count({ where: { walletAddress: address } }),
-    prisma.nFT.count({ where: { ownerAddress: address } }),
-  ]);
-  return { ...user, stats: { recordCount, challengeCount, voteCount, rewardCount, stakeFlowCount, nftCount } };
-}
-
-export async function getUserRecords(address: string, query: { page: number; limit: number }) {
-  await getUser(address);
-  return listRecords({ playerAddress: address, page: query.page, limit: query.limit });
-}
-
-export async function getUserVotes(address: string, query: { page: number; limit: number }) {
-  await getUser(address);
-  if (isMock()) {
-    const rows = mockDb().votes.filter((vote) => vote.voterAddress === address).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const result = mockPage(rows, query.page, query.limit);
-    return { ...result, items: result.items.map((vote) => ({ ...vote, challenge: mockDb().challenges.find((challenge) => challenge.id === vote.challengeId) })) };
-  }
-  const where = { voterAddress: address };
-  const [total, items] = await prisma.$transaction([
+  const where: Prisma.VoteWhereInput = { voterAddress: address };
+  const [total, rows] = await prisma.$transaction([
     prisma.vote.count({ where }),
-    prisma.vote.findMany({ where, include: { challenge: { include: { record: true, cheat: true, rounds: true } } }, orderBy: { createdAt: "desc" }, skip: skip(query.page, query.limit), take: query.limit }),
+    prisma.vote.findMany({ where, include: { challenge: true }, orderBy: { createdAt: "desc" }, skip: query.offset, take: query.limit }),
   ]);
-  return { items, pagination: pageMeta(query.page, query.limit, total) };
+  return {
+    items: rows.map((vote) => ({
+      ...voteView(vote),
+      challenge: vote.challenge ? {
+        challengeId: vote.challenge.id, recordId: vote.challenge.recordId,
+        statusCode: vote.challenge.status, status: challengeStatusName(vote.challenge.status),
+      } : null,
+    })),
+    pagination: pageMeta(query.offset, query.limit, total),
+  };
 }
 
-export async function getUserRewards(address: string, query: { page: number; limit: number }) {
-  await getUser(address);
+export async function getUserRewards(address: string, query: { offset: number; limit: number }) {
   if (isMock()) {
-    const rows = mockDb().rewards.filter((reward) => reward.walletAddress === address).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    return mockPage(rows, query.page, query.limit);
+    const page = slice(sortedDesc(demo.demoRewards.filter((row) => row.walletAddress === address), "createdAt"), query.offset, query.limit);
+    return { items: page.items.map(rewardView), pagination: page.pagination };
   }
   const where = { walletAddress: address };
-  const [total, items] = await prisma.$transaction([
-    prisma.reward.count({ where }), prisma.reward.findMany({ where, orderBy: { createdAt: "desc" }, skip: skip(query.page, query.limit), take: query.limit }),
+  const [total, rows] = await prisma.$transaction([
+    prisma.reward.count({ where }),
+    prisma.reward.findMany({ where, orderBy: { createdAt: "desc" }, skip: query.offset, take: query.limit }),
   ]);
-  return { items, pagination: pageMeta(query.page, query.limit, total) };
+  return { items: rows.map(rewardView), pagination: pageMeta(query.offset, query.limit, total) };
 }
 
-export async function getUserStakeFlows(address: string, query: { page: number; limit: number }) {
-  await getUser(address);
+export async function getUserStakes(address: string, query: { offset: number; limit: number }) {
   if (isMock()) {
-    const rows = mockDb().stakeFlows.filter((flow) => flow.walletAddress === address).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    return mockPage(rows, query.page, query.limit);
+    const page = slice(sortedDesc(demo.demoStakeFlows.filter((row) => row.walletAddress === address), "createdAt"), query.offset, query.limit);
+    return {
+      items: page.items.map(stakeFlowView),
+      pagination: page.pagination,
+      withdrawals: demo.demoWithdrawals.filter((row) => row.walletAddress === address).map((row) => ({
+        amount: row.amount, transactionHash: row.transactionHash, createdAt: iso(row.createdAt),
+      })),
+    };
   }
   const where = { walletAddress: address };
-  const [total, items] = await prisma.$transaction([
-    prisma.stakeFlow.count({ where }), prisma.stakeFlow.findMany({ where, orderBy: { createdAt: "desc" }, skip: skip(query.page, query.limit), take: query.limit }),
+  const [total, rows, withdrawals] = await prisma.$transaction([
+    prisma.stakeFlow.count({ where }),
+    prisma.stakeFlow.findMany({ where, orderBy: { createdAt: "desc" }, skip: query.offset, take: query.limit }),
+    prisma.withdrawal.findMany({ where, orderBy: { createdAt: "desc" }, take: 50 }),
   ]);
-  return { items, pagination: pageMeta(query.page, query.limit, total) };
+  return {
+    items: rows.map(stakeFlowView),
+    pagination: pageMeta(query.offset, query.limit, total),
+    withdrawals: withdrawals.map((row) => ({
+      amount: decimal(row.amount), transactionHash: row.transactionHash, source: row.source, createdAt: iso(row.createdAt),
+    })),
+  };
 }
 
-export async function listNfts(query: { ownerAddress?: string; recordId?: number; status?: "PROVISIONAL" | "VERIFIED" | "REVOKED"; page: number; limit: number }) {
+export async function listNfts(query: { ownerAddress?: string; status?: string; offset: number; limit: number }) {
+  const status = query.status === undefined ? undefined : (() => {
+    const parsed = parseRecordStatus(query.status);
+    if (parsed === undefined) throw new AppError(400, "INVALID_STATUS", `Unknown NFT status: ${query.status}`);
+    return parsed;
+  })();
   if (isMock()) {
-    const rows = mockDb().nfts.filter((nft) => (!query.ownerAddress || nft.ownerAddress === query.ownerAddress) && (!query.recordId || nft.recordId === query.recordId) && (!query.status || nft.status === query.status));
-    return mockPage(rows, query.page, query.limit);
+    const rows = demo.demoNfts.filter((nft) =>
+      (!query.ownerAddress || nft.ownerAddress === query.ownerAddress) && (status === undefined || nft.status === status));
+    const page = slice(rows, query.offset, query.limit);
+    return { items: page.items.map(nftView), pagination: page.pagination };
   }
-  const where: Prisma.NFTWhereInput = { ownerAddress: query.ownerAddress, recordId: query.recordId, status: query.status };
-  const [total, items] = await prisma.$transaction([
-    prisma.nFT.count({ where }), prisma.nFT.findMany({ where, include: { record: true }, orderBy: { createdAt: "desc" }, skip: skip(query.page, query.limit), take: query.limit }),
+  const where: Prisma.NFTWhereInput = { ownerAddress: query.ownerAddress, status };
+  const [total, rows] = await prisma.$transaction([
+    prisma.nFT.count({ where }),
+    prisma.nFT.findMany({ where, orderBy: { id: "asc" }, skip: query.offset, take: query.limit }),
   ]);
-  return { items, pagination: pageMeta(query.page, query.limit, total) };
-}
-
-export async function getUserNfts(address: string, query: { page: number; limit: number }) {
-  await getUser(address);
-  return listNfts({ ownerAddress: address, page: query.page, limit: query.limit });
+  return { items: rows.map(nftView), pagination: pageMeta(query.offset, query.limit, total) };
 }
 
 export async function getNft(tokenId: number) {
-  if (isMock()) {
-    const nft = mockDb().nfts.find((item) => item.id === tokenId);
-    if (!nft) notFound("NFT");
-    return nft;
-  }
-  const nft = await prisma.nFT.findUnique({ where: { id: tokenId }, include: { record: true } });
-  if (!nft) notFound("NFT");
-  return nft;
+  const nft = isMock()
+    ? demo.demoNfts.find((item) => item.id === tokenId)
+    : await prisma.nFT.findUnique({ where: { id: tokenId }, include: { record: true } });
+  if (!nft) throw new AppError(404, "NOT_FOUND", `NFT ${tokenId} not found`);
+  return { ...nftView(nft), record: (nft as AnyRow).record ?? null };
 }
 
-export async function listGames() {
-  if (isMock()) return { items: mockDb().games.map((game) => mockGame(game.id)) };
-  return { items: await prisma.game.findMany({ include: { modes: { orderBy: { modeId: "asc" } } }, orderBy: { id: "asc" } }) };
-}
+// ------------------------------------------------------------------------------- health
 
-export async function getGame(gameId: number) {
-  if (isMock()) {
-    const game = mockGame(gameId);
-    if (!game) notFound("Game");
-    return game;
+export async function getHealth() {
+  const dataMode = process.env.DATA_MODE === "mock" ? "mock" : "prisma";
+  const chain = await getChainHead();
+
+  if (dataMode === "mock") {
+    return {
+      service: "runproof-api", status: "ok", dataMode, database: "not-used",
+      indexer: null, chain,
+    };
   }
-  const game = await prisma.game.findUnique({ where: { id: gameId }, include: { modes: { orderBy: { modeId: "asc" } }, cheats: true } });
-  if (!game) notFound("Game");
-  return game;
+
+  try {
+    await prisma.$queryRaw`SELECT 1 FROM "categories" LIMIT 1`;
+  } catch {
+    throw new AppError(503, "DATABASE_UNAVAILABLE", "Database is unavailable or migrations have not been applied");
+  }
+
+  const [state, reconcile] = await Promise.all([
+    prisma.syncState.findUnique({ where: { id: "runproof-primary" } }),
+    prisma.reconcileRun.findFirst({ orderBy: { ranAt: "desc" } }),
+  ]);
+
+  const indexedBlock = state?.lastBlock ?? null;
+  const chainHead = chain ? BigInt(chain.head) : null;
+  const lagBlocks = indexedBlock !== null && chainHead !== null
+    ? (chainHead > indexedBlock ? (chainHead - indexedBlock).toString() : "0")
+    : null;
+
+  return {
+    service: "runproof-api",
+    status: lagBlocks !== null && Number(lagBlocks) > 100 ? "lagging" : "ok",
+    dataMode,
+    database: "connected",
+    chain,
+    indexer: {
+      indexedBlock: indexedBlock === null ? null : indexedBlock.toString(),
+      indexedBlockHash: state?.lastBlockHash ?? null,
+      lastSyncedAt: state?.updatedAt ?? null,
+      lagBlocks,
+    },
+    lastReconcile: reconcile ? {
+      ranAt: reconcile.ranAt,
+      ok: reconcile.ok,
+      checkedBoards: reconcile.checkedBoards,
+      mismatches: reconcile.mismatches,
+      lagBlocks: reconcile.lagBlocks.toString(),
+    } : null,
+  };
 }

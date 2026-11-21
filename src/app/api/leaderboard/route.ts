@@ -3,5 +3,9 @@ import { getLeaderboard } from "@/lib/services";
 import { leaderboardSchema } from "@/lib/validation";
 
 export async function GET(request: Request) {
-  return respond(async (requestId) => ok(await getLeaderboard(leaderboardSchema.parse(queryObject(request))), { requestId }));
+  return respond(async (requestId) => {
+    const query = leaderboardSchema.parse(queryObject(request));
+    const { pagination, ...data } = await getLeaderboard(query);
+    return ok(data, { requestId, pagination });
+  });
 }

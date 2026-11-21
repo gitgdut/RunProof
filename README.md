@@ -1,8 +1,10 @@
-# RunProof
+# RunProof 后端
 
-RunProof 后端基于 Next.js Route Handlers、TypeScript、Prisma、PostgreSQL、Zod 和 Viem。数据库只保存索引与展示数据；质押金额、投票结果、罚没和 NFT 的最终状态一律以 Monad 上的合约为准。
+按 **V2 合约模型**（Category / Division / ChallengeReason）把链上事件索引成数据库，并对外提供只读 REST API。排名以链上为准（`bestRecordId`），数据库负责完整榜单与历史；两者每轮同步对账。
 
-本文档与 `abi/*.json`、合约团队提供的 `INTEGRATION.md` 保持一致（对接基线 commit `2ba9e3a`）。
+- 网络：Monad Testnet（Chain ID `10143`）
+- 起始区块：`81509823`
+- 后端**不签名、不代发交易**，`POST /api/records` 只返回未签名的 `submitRecord` 调用参数
 
 ## 快速演示（无需数据库）
 
@@ -12,144 +14,97 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-`.env.example` 默认 `DATA_MODE=mock`，服务启动后即可使用内置 Tetris 演示数据：
+默认 `DATA_MODE=mock`，内置与链上演示一致的 5 个分类、9 条成绩、1 个已确认挑战：
 
 ```bash
 curl http://localhost:3000/api/health
-curl http://localhost:3000/api/games
-curl http://localhost:3000/api/records
-curl http://localhost:3000/api/leaderboard
-curl http://localhost:3000/api/voting
+curl http://localhost:3000/api/categories
+curl "http://localhost:3000/api/leaderboard?categoryId=4&divisionId=1"
+curl "http://localhost:3000/api/records?categoryId=4&divisionId=1&status=Verified"
+curl http://localhost:3000/api/reasons
 ```
-
-Mock 模式同样执行完整的 Zod 校验、EIP-191 签名验证和重复提交检查，不是绕过安全的静态响应。唯一的例外是 `/api/users/:address/claimable`，它必须真实读取链上 `claimable(address)`，没有 RPC 时返回 `503 CHAIN_NOT_CONFIGURED`。
 
 ## PostgreSQL 模式
 
-需要 Docker 或已有 PostgreSQL 16：
-
 ```bash
 docker compose up -d
-cp .env.example .env.local
-```
-
-将 `.env.local` 中的 `DATA_MODE` 改为 `prisma`，然后执行：
-
-```bash
+cp .env.example .env.local   # 把 DATA_MODE 改成 prisma
 pnpm db:deploy
 pnpm db:seed
 pnpm dev
 ```
 
-数据库连接默认为 `postgresql://runproof:runproof@localhost:5432/runproof?schema=public`。生产环境必须更换数据库密码，且不要提交 `.env.local`。
+> `prisma/migrations/202611211500_v2_categories` 会用 V2 表结构替换 V1（`games`/`cheats`），开头是 `DROP TABLE ... CASCADE`，只适用于还没有生产数据的阶段。
 
-> `prisma/migrations/202611210004_contract_alignment` 是贴合链上 ID 的重构迁移，开头包含 `DROP TABLE ... CASCADE`。它只适用于还没有生产数据的阶段；若目标库已有需要保留的数据，请先导出再迁移。
-
-## 验证与构建
-
-```bash
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm start
-```
-
-`pnpm test` 使用 Mock 数据源运行 18 个用例：11 个接口集成测试（健康检查、分页筛选、排行榜、投票汇总、签名写入、防重放、防伪造、作弊库权限）+ 7 个事件处理器测试（`StakeReturned` 缺少 `challengeId`、`RewardDistributed` 类型映射、`VotingFinalized` 结果、`RecordVerified` 联动 NFT、事件顺序校验）。
-
-## 合约对接
-
-Monad Testnet，Chain ID `10143`，RPC `https://testnet-rpc.monad.xyz`。ABI 已随仓库提交在 `abi/`，后端不再维护手写事件签名。
+## 合约
 
 | 合约 | 环境变量 | 地址 |
 | --- | --- | --- |
-| RunProofCore | `RUNPROOF_CORE_ADDRESS` | `0x606717FC7055B81C4290b34F9cA1E8123416b0Ab` |
-| CheatRegistry | `CHEAT_REGISTRY_ADDRESS` | `0xc0df0A2342557D42D35F34913EDB28E0792Ff400` |
-| GameRegistry | `GAME_REGISTRY_ADDRESS` | `0x9906867e359F1C7d609f89f39beD4b15023601B0` |
-| RecordNFT | `RECORD_NFT_ADDRESS` | `0x2bFb2e522e51A458b6317343ea6Ef8A5E454c6EE` |
+| RunProofCore | `RUNPROOF_CORE_ADDRESS` | `0x1eb96bf618151adA2F7174CE9b8c41F45486084F` |
+| CategoryRegistry | `CATEGORY_REGISTRY_ADDRESS` | `0x8D3aEdd92fA2151F61877D0e844a556E4eAB91A7` |
+| ChallengeReasonRegistry | `CHALLENGE_REASON_REGISTRY_ADDRESS` | `0x522d2883FA6ac437F414874B9B7cEEAfAE4caC0b` |
+| RecordNFT | `RECORD_NFT_ADDRESS` | `0x967D0B53cb05BC9D6c85BEB087444e6f5a3e1360` |
 
-重新部署后四个地址与 `INDEXER_START_BLOCK` 必须一起更新，否则索引器会读错合约或漏掉早期事件。
+枚举按链上数值存储，不做本地翻译：`RecordStatus` 0 None / 1 Provisional / 2 Verified / 3 Revoked；`ChallengeStatus` 0–5；`Choice` 0 None / 1 Confirm / 2 Deny；`direction` 1 HigherIsBetter / 2 LowerIsBetter；`StakeKind`/`SlashKind` 0–2；`RewardKind` 0–2。API 同时返回数值（`statusCode`）与名称（`status`）。
 
-数据模型的取值严格对应链上枚举：
+### ABI 来源（务必知悉）
 
-- `RecordStatus`：链上 0 None / 1 Provisional / 2 Verified / 3 Revoked → 库内 `PENDING`（仅 API 预登记）/ `PROVISIONAL` / `VERIFIED` / `REVOKED`
-- `ChallengeStatus`：链上 0–5 → `PENDING` / `VOTING` / `EVIDENCE_VOTING` / `CONFIRMED` / `DENIED` / `INCONCLUSIVE`
-- `Choice`：链上 1 Confirm / 2 Deny → `CONFIRM` / `DENY`；`round=1` 的证据充分性轮中二者语义分别是 Evidence Sufficient / Evidence Required
-- `StakeKind` 与 `RewardKind` 分别落到 `StakeFlow.stakeKind` 与 `Reward.rewardType`
-- 所有 `uint*` 在服务端以 `bigint`/十进制字符串处理，金额单位为 wei，时间为 Unix 秒转 `Date`
-
-## Monad 事件索引器
-
-索引器同时同步四个合约，覆盖 21 个事件：
-
-- RunProofCore：`RecordSubmitted`、`ChallengeCreated`、`EvidenceSubmitted`、`VoteCommitted`、`VoteRevealed`、`VotingExtended`、`EvidenceVotingStarted`、`VotingFinalized`、`RecordVerified`、`RecordRevoked`、`RewardDistributed`、`StakeReturned`、`StakeSlashed`
-- CheatRegistry：`CheatRegistered`
-- GameRegistry：`GameRegistered`、`GameVersionUpdated`、`GameActiveSet`、`ModeRegistered`、`ModeActiveSet`
-- RecordNFT：`NFTMinted`、`Transfer`
-
-启用步骤：
-
-1. 使用 `DATA_MODE=prisma`，先完成 Migration 与 Seed。
-2. 在 `.env.local` 填好四个合约地址、`MONAD_RPC_URL`、`MONAD_CHAIN_ID`、`INDEXER_START_BLOCK`。演示部署的四合约部署块为 `81498746`（`0x4db927a`），`INDEXER_START_BLOCK` 不应小于该值。
-3. 启动持续同步：
+合约分支 `origin/contracts/core` 目前仍发布 V1 的 `CheatRegistry/GameRegistry`，**没有 V2 的 `abi/*.json`**。因此本仓库的 ABI 是依据 `BACKEND-HANDOFF.md` 的签名重建、并用真实链数据校验过的：
 
 ```bash
-pnpm indexer
+pnpm abi:gen     # 从 scripts/gen-abi.ts 的声明生成 abi/*.json
+pnpm abi:check   # 用生成的 JSON 反查真实链：getRecord / getCategory / getReason / rounds / votes / params / bestRecordId / requiredPayment / claimable
 ```
 
-单次同步便于部署到定时任务或 CI：
+校验结果（2026-11-21 实测）：`getRecord(1)` = category 4 / division 1 / value 1152345 / direction 2 / Verified；`getCategory(1)` = 100m Sprint / ms / LowerIsBetter；`getReason(1)` = R001 Fabricated Evidence；`params()` 中 `minVoters=3`、`quorumPower=300`、`approvalBps=7500`、`wrongSlashBps=3000`，与文档一致。
+
+`getRecord`/`getCategory`/`getReason` 返回的是**单个 tuple（带外层 offset）**，`rounds`/`votes`/`params` 返回的是**扁平多值**，这一区别已在 `src/indexer/reads.ts` 中处理。合约团队发布正式 ABI 后，优先用他们的文件覆盖 `abi/`，再跑一次 `pnpm abi:check`。
+
+## 索引器
 
 ```bash
-INDEXER_ONCE=true pnpm indexer
+pnpm indexer                     # 持续同步
+INDEXER_ONCE=true pnpm indexer    # 单次同步，适合定时任务
+pnpm indexer:verify               # 校验最近 1000 块的链上日志与归档表
+pnpm indexer:probe                # 不连数据库，只看 RPC 与事件解码
 ```
 
-校验最近 1000 个区块的链上日志与数据库索引：
+同步 4 个合约、30 类事件：`CategoryCreated/Updated/ActiveSet`、`DivisionCreated/ActiveSet`、`ReasonRegistered/Proposed/ProposalVoted/ProposalFinalized/DiscovererRewarded`、`RecordSubmitted/Verified/Revoked`、`LeaderboardUpdated`、`ChallengeCreated`、`EvidenceSubmitted`、`VoteCommitted/Revealed`、`VotingExtended`、`EvidenceVotingStarted`、`VotingFinalized`、`StakeReturned/Slashed`、`RewardDistributed`、`Withdrawn`、`PoolFunded/Withdrawn`、`ParamsUpdated`、`NFTMinted`、`Transfer`。
+
+关键保证：
+
+- **幂等**：`(chainId, txHash, logIndex)` 唯一；原始日志先落 `chain_event_logs`，事件处理与派生表写入在同一个事务里。
+- **重组**：游标保存区块 Hash，启动时若已不在主链则抛 `ChainReorgError` 停止，等待人工对账。
+- **对账**：每批事件后按链上 view 重写 Record / Challenge / Round / Vote；再对每个涉及的 `(categoryId, divisionId)` 读 `bestRecordId()` 与库内指针比对，不一致时以链上为准修正并写入 `reconcile_runs`。
+- **分页**：公共 RPC 的 `eth_getLogs` 跨度上限约 100 块，默认窗口 100，被拒时自动折半（下限 10）。
+- **轮次**：挑战升级到证据充分性投票时 round 0 静默结算（不发 `VotingFinalized`），因此对账覆盖 `0..当前轮`。
+
+## 榜单规则
+
+```
+1. 只取 status = Verified(2)
+2. direction = 1 → value DESC；direction = 2 → value ASC
+3. 同值按 submittedAt 更早
+4. 仍相同按 recordId 更小
+```
+
+排序方向读 `Record.direction`（提交时固化的快照），不读分类当前值。`displayValue` 由后端统一格式化：`1152345` + `ms` → `19:12.345`，`1432` + `cps`(2) → `14.32`。成绩撤销后立即可从榜单消失（软删 `status=3`，保留历史）。
+
+## 验证
 
 ```bash
-pnpm indexer:verify
+pnpm typecheck
+pnpm test        # 34 个用例（25 个接口/格式化 + 9 个事件处理器）
+pnpm build
+pnpm abi:check   # 需要网络
 ```
-
-不依赖数据库、只探测 RPC 与事件解码是否正常（会打印每个区间的解码结果）：
-
-```bash
-pnpm indexer:probe
-```
-
-> 公共测试网 RPC 对 `eth_getLogs` 的区块跨度有限制（`testnet-rpc.monad.xyz` 实测 100 区块可用、500 区块被拒），因此 `INDEXER_BATCH_SIZE` 默认 100；若某次查询仍被拒，索引器会自动把窗口折半（下限 10 区块）后重试，而不是让整个同步循环失败。
-
-已用 `pnpm indexer:probe` 在部署区块起 6000 个区块内实测：77 条事件全部按正式 ABI 正确解码（`RecordSubmitted` 4、`ChallengeCreated` 2、`VoteCommitted` 15、`VoteRevealed` 13、`VotingFinalized` 2、`VotingExtended` 1、`EvidenceVotingStarted` 1、`RecordVerified` 1、`RecordRevoked` 2、`RewardDistributed` 9、`StakeReturned` 12、`StakeSlashed` 4、`NFTMinted` 1、`Transfer` 1、`CheatRegistered` 5、`GameRegistered` 1、`ModeRegistered` 3）。实测也确认了两处易错点：`StakeReturned` 事件**没有** `challengeId` 字段；`VotingFinalized.outcome` 直接是 `ChallengeStatus`（3/4/5）。
-
-索引器的关键保证：
-
-- `(chainId, transactionHash, logIndex)` 唯一去重，原始日志先落 `chain_event_logs`，事件处理与派生表写入在同一个 `prisma.$transaction` 内完成，重复投递不会产生重复记录或重复奖励。
-- `sync_states` 保存 `lastBlock` 与 `lastBlockHash`；启动时若游标区块哈希已变化，抛出 `ChainReorgError` 并停止（`manual_reconciliation_required`），不会在错误游标上继续追加数据。
-- 每批事件之后用链上 view（`getRecord` / `getChallenge` / `rounds` / `votes` / `claimable`）对账派生表，链上状态覆盖数据库，避免事件丢失导致状态长期偏离。
-- RPC 失败按指数退避重试；失败不推进游标。
-
-注意：`RewardDistributed`、`StakeReturned`、`StakeSlashed` 只是资金流水。账户**当前可提余额**始终以 `claimable(address)` 为准，由 `/api/users/:address/claimable` 实时读取，不使用数据库累计值。
-
-## 与合约的分工
-
-后端不提供任何能改变链上结果的写入口：
-
-- 记录与挑战的 POST 只做“签名 + 链上事实入库前预登记”，状态固定为 `PENDING`，必须由 `RecordSubmitted` / `ChallengeCreated` 事件确认。
-- 投票（commit / reveal / finalize）、领取奖励（`claimVote` / `withdraw`）、撤销成绩、铸造 NFT 全部由前端直连合约，后端只读。
-- 挑战创建前校验：记录必须已被索引器确认（`indexedAt` 非空），`CheatStatus=ACTIVE`，普通挑战要求 `PROVISIONAL` 且未过 `challengeDeadline`，特殊挑战要求 `VERIFIED`。
-- API 不保存私钥，`.env*` 已在 `.gitignore` 中。
-
-## API 与安全
-
-完整接口、响应格式、签名消息和请求示例见 [docs/API.md](docs/API.md)。
-
-- 所有输入经过 Zod（`.strict()` 拒绝未声明字段）；金额使用 wei 字符串；证据 URI 只允许 `http`、`https`、`ipfs`。
-- Records / Challenges / Cheats 三个写接口要求 EIP-191 `personal_sign`，签名消息含 Chain ID、全部业务字段与 `expiresAt`（默认 5 分钟窗口）。
-- Cheat Registry 写入额外要求 `CHEAT_REGISTRY_ADMIN_ADDRESSES` 白名单，非白名单返回 `403`。
-- 重复的 `recordId` / `challengeId`、重复交易 Hash、重复证据 Hash 一律 `409`。
 
 ## 目录
 
-- `abi/`：四合约正式 ABI（唯一准绳，勿手改）
-- `prisma/`：Schema、Migration、Seed
-- `src/app/api/`：REST Route Handlers
-- `src/lib/`：统一响应、校验、签名、服务层、链上只读调用与演示数据
-- `src/indexer/`：ABI 事件筛选、配置、链上读取、事件处理、同步、校验
-- `src/test/`：接口集成测试与索引器事件处理器测试
+- `abi/`：V2 ABI（由 `pnpm abi:gen` 生成，勿手改）
+- `prisma/`：Schema、迁移、Seed（V2 演示数据）
+- `src/app/api/`：21 个只读 Route Handlers
+- `src/indexer/`：ABI 筛选、配置、链上读取、事件处理、同步、校验
+- `src/lib/`：响应封装、校验、枚举、格式化、链上只读调用、服务层
+- `scripts/`：ABI 生成与链上校验、RPC 探针
+- `src/test/`：接口与事件处理器测试

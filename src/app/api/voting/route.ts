@@ -4,7 +4,8 @@ import { listVotingSchema } from "@/lib/validation";
 
 export async function GET(request: Request) {
   return respond(async (requestId) => {
-    const { items, pagination } = await listVoting(listVotingSchema.parse(queryObject(request)));
+    const query = listVotingSchema.parse(queryObject(request));
+    const { items, pagination } = await listVoting(query);
     return ok({ items }, { requestId, pagination });
   });
 }

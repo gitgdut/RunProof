@@ -1,7 +1,10 @@
 import { ok, respond } from "@/lib/api";
-import { getChallenge } from "@/lib/services";
+import { getChallengeDetail } from "@/lib/services";
 import { idParamSchema } from "@/lib/validation";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
-  return respond(async (requestId) => ok(await getChallenge(idParamSchema.parse(await context.params).id), { requestId }));
+  return respond(async (requestId) => {
+    const { id } = idParamSchema.parse(await context.params);
+    return ok(await getChallengeDetail(id), { requestId });
+  });
 }

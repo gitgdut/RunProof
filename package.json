@@ -14,7 +14,9 @@
     "db:seed": "prisma db seed",
     "indexer": "tsx src/indexer/run.ts",
     "indexer:verify": "tsx src/indexer/verify.ts",
-    "indexer:probe": "tsx scripts/check-logs.ts"
+    "indexer:probe": "tsx scripts/check-logs.ts",
+    "abi:gen": "tsx scripts/gen-abi.ts",
+    "abi:check": "tsx scripts/check-abi.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -5,107 +5,132 @@ type Call = { model: string; method: string; args: Record<string, any> };
 
 function fakeTx() {
   const calls: Call[] = [];
-  const handler = {
-    get(_target: unknown, model: string) {
+  const tx = new Proxy({}, {
+    get(_target, model: string) {
       return new Proxy({}, {
-        get(_inner: unknown, method: string) {
+        get(_inner, method: string) {
           return async (args: Record<string, any> = {}) => {
             calls.push({ model, method, args });
             if (method === "findUnique") {
-              if (model === "record") return { id: 1, gameId: 1, status: "PROVISIONAL" };
-              if (model === "challenge") return { id: 1, round: 0, status: "VOTING" };
+              if (model === "category") return { id: 4, direction: 2, ruleVersion: 1 };
+              if (model === "record") return { id: 9, categoryId: 4, divisionId: 1, status: 3 };
+              if (model === "challenge") return { id: 1, round: 0 };
               return { id: 1 };
             }
+            if (method === "findFirst") return { id: 1, value: "1152345" };
             if (method === "updateMany") return { count: 1 };
             return {};
           };
         },
       });
     },
-  };
-  return { tx: new Proxy({}, handler) as any, calls };
+  });
+  return { tx: tx as any, calls };
 }
 
-function log(eventName: string, args: Record<string, unknown>, logIndex = 1): IndexerLog {
+function log(eventName: string, args: Record<string, unknown>, source = "core", logIndex = 1): IndexerLog {
   return {
     eventName, args, transactionHash: `0x${"1".repeat(64)}`, logIndex, blockNumber: 100n,
-    blockHash: `0x${"2".repeat(64)}`, address: `0x${"3".repeat(40)}`, source: "core",
+    blockHash: `0x${"2".repeat(64)}`, address: `0x${"3".repeat(40)}`, source,
   };
 }
 
-const blockTimestamp = new Date("2026-11-21T08:00:00.000Z");
-const call = (calls: Call[], model: string, method: string) => calls.find((item) => item.model === model && item.method === method)!;
+const blockTimestamp = new Date("2026-11-21T02:05:00.000Z");
+const find = (calls: Call[], model: string, method: string) => calls.find((item) => item.model === model && item.method === method)!;
 
 describe("indexer event handlers", () => {
-  it("stores StakeReturned without a challengeId as null", async () => {
+  it("stores a submitted record as Provisional with the category snapshot", async () => {
     const { tx, calls } = fakeTx();
-    await applyEvent(tx, log("StakeReturned", {
-      recordId: 1n, cheatId: 0n, account: "0x1000000000000000000000000000000000000001",
-      amount: 1000000000000000000n, kind: 0,
+    await applyEvent(tx, log("RecordSubmitted", {
+      recordId: 1n, player: "0x0D64b1D9AbF6C30ced5e1edf325C3536086f32E7", categoryId: 4n, divisionId: 1n,
+      value: 1152345n, stake: 100000000000000000n, evidenceHash: `0x${"ab".repeat(32)}`,
+      evidenceURI: "ipfs://evidence/1", deadline: 1795244757n,
     }), blockTimestamp);
 
-    const created = call(calls, "stakeFlow", "create").args.data;
-    expect(created).toMatchObject({ recordId: 1, cheatId: null, challengeId: null, flowType: "RETURNED", stakeKind: "PLAYER_STAKE" });
-    expect(created.amount).toBe("1000000000000000000");
+    const created = find(calls, "record", "upsert").args.create;
+    expect(created).toMatchObject({ id: 1, categoryId: 4, divisionId: 1, value: "1152345", status: 1, direction: 2, ruleVersion: 1 });
+    expect(created.player).toBe("0x0d64b1d9abf6c30ced5e1edf325c3536086f32e7");
+    expect(created.deadline).toEqual(new Date(1795244757 * 1000));
   });
 
-  it("records StakeSlashed with its challengeId and stake kind", async () => {
-    const { tx, calls } = fakeTx();
-    await applyEvent(tx, log("StakeSlashed", {
-      recordId: 1n, cheatId: 2n, account: "0x2000000000000000000000000000000000000002",
-      amount: 500n, kind: 1, challengeId: 7n,
-    }), blockTimestamp);
-
-    expect(call(calls, "stakeFlow", "create").args.data).toMatchObject({ cheatId: 2, challengeId: 7, flowType: "SLASHED", stakeKind: "CHALLENGE_BOND" });
-  });
-
-  it("maps RewardDistributed kinds onto RewardType", async () => {
-    const { tx, calls } = fakeTx();
-    await applyEvent(tx, log("RewardDistributed", {
-      recordId: 1n, cheatId: 2n, account: "0x3000000000000000000000000000000000000003",
-      amount: 10n, kind: 1, challengeId: 0n,
-    }), blockTimestamp);
-
-    expect(call(calls, "reward", "create").args.data).toMatchObject({ rewardType: "PLAYER_COMPENSATION", challengeId: null });
-  });
-
-  it("seeds a challenge in VOTING with one initial evidence and round 0 commit window", async () => {
+  it("seeds a challenge in Voting with one initial evidence and round 0", async () => {
     const { tx, calls } = fakeTx();
     await applyEvent(tx, log("ChallengeCreated", {
-      recordId: 1n, cheatId: 2n, challenger: "0x3000000000000000000000000000000000000003", challengeId: 7n,
-      bond: 100000000000000000n, special: false, evidenceHash: `0x${"a".repeat(64)}`,
-      evidenceURI: "ipfs://runproof/challenges/7", commitEnd: 1763712000n,
+      recordId: 9n, reasonId: 1n, challenger: "0x2000000000000000000000000000000000000002", challengeId: 1n,
+      bond: 500000000000000000n, special: true, evidenceHash: `0x${"cd".repeat(32)}`,
+      evidenceURI: "ipfs://evidence/edited", commitEnd: 1795245412n,
     }), blockTimestamp);
 
-    expect(call(calls, "challenge", "upsert").args.create).toMatchObject({ id: 7, status: "VOTING", round: 0, special: false, evidenceCount: 1 });
-    expect(call(calls, "challengeRound", "upsert").args.create).toMatchObject({ challengeId: 7, round: 0, commitEnd: new Date(1763712000 * 1000) });
+    expect(find(calls, "challenge", "upsert").args.create).toMatchObject({ id: 1, status: 1, round: 0, special: true, evidenceCount: 1 });
+    expect(find(calls, "challengeRound", "upsert").args.create).toMatchObject({ challengeId: 1, round: 0, commitEnd: new Date(1795245412 * 1000) });
   });
 
-  it("applies VotingFinalized outcome, round and powers", async () => {
+  it("maps the VotingFinalized outcome and winner", async () => {
     const { tx, calls } = fakeTx();
     await applyEvent(tx, log("VotingFinalized", {
-      recordId: 1n, cheatId: 2n, challengeId: 7n, outcome: 4, round: 0, confirmPower: 4000n, denyPower: 500n,
+      recordId: 9n, reasonId: 1n, challengeId: 1n, outcome: 4, round: 0, confirmPower: 400n, denyPower: 500n,
     }), blockTimestamp);
 
-    expect(call(calls, "challenge", "update").args.data).toMatchObject({ status: "DENIED", round: 0 });
-    expect(call(calls, "challengeRound", "upsert").args.update).toMatchObject({ finalized: true, winner: "DENY", confirmPower: 4000n, denyPower: 500n });
+    expect(find(calls, "challenge", "update").args.data).toMatchObject({ status: 4, round: 0 });
+    expect(find(calls, "challengeRound", "upsert").args.update).toMatchObject({ finalized: true, winner: 2, confirmPower: "400", denyPower: "500" });
   });
 
-  it("marks the record verified and syncs the NFT status", async () => {
+  it("keeps StakeReturned working although the event has no challengeId", async () => {
     const { tx, calls } = fakeTx();
-    await applyEvent(tx, log("RecordVerified", {
-      recordId: 1n, player: "0x1000000000000000000000000000000000000001", gameId: 1n, score: 125430n,
+    await applyEvent(tx, log("StakeReturned", {
+      recordId: 9n, reasonId: 1n, account: "0x2000000000000000000000000000000000000002",
+      amount: 500000000000000000n, kind: 1,
     }), blockTimestamp);
 
-    expect(call(calls, "record", "updateMany").args.data).toMatchObject({ status: "VERIFIED", score: 125430n });
-    expect(call(calls, "nFT", "updateMany").args.data).toEqual({ status: "VERIFIED" });
+    expect(find(calls, "stakeFlow", "create").args.data).toMatchObject({
+      recordId: 9, reasonId: 1, challengeId: null, flow: "RETURNED", kind: 1, amount: "500000000000000000",
+    });
   });
 
-  it("rejects an indexer sequence where ChallengeCreated precedes RecordSubmitted", async () => {
+  it("maps reward kinds and keeps the challenger reward distinct", async () => {
+    const { tx, calls } = fakeTx();
+    await applyEvent(tx, log("RewardDistributed", {
+      recordId: 9n, reasonId: 1n, account: "0x2000000000000000000000000000000000000002",
+      amount: 160000000000000000n, kind: 0, challengeId: 1n,
+    }), blockTimestamp);
+
+    expect(find(calls, "reward", "create").args.data).toMatchObject({ kind: 0, challengeId: 1, amount: "160000000000000000", source: "core" });
+  });
+
+  it("updates the board pointer from LeaderboardUpdated", async () => {
+    const { tx, calls } = fakeTx();
+    await applyEvent(tx, log("LeaderboardUpdated", {
+      categoryId: 4n, divisionId: 1n, bestRecordId: 1n, bestValue: 1152345n,
+    }), blockTimestamp);
+
+    expect(find(calls, "leaderboard", "upsert").args.create).toMatchObject({ categoryId: 4, divisionId: 1, bestRecordId: 1, bestValue: "1152345" });
+  });
+
+  it("recomputes the board when a record is revoked", async () => {
+    const { tx, calls } = fakeTx();
+    await applyEvent(tx, log("RecordRevoked", {
+      recordId: 9n, player: "0x5000000000000000000000000000000000000005", reasonId: 1n, challengeId: 1n,
+    }), blockTimestamp);
+
+    expect(find(calls, "record", "updateMany").args.data).toEqual({ status: 3 });
+    expect(find(calls, "nFT", "updateMany").args.data).toEqual({ status: 3 });
+    expect(find(calls, "leaderboard", "upsert").args.create).toMatchObject({ categoryId: 4, divisionId: 1, bestRecordId: 1 });
+  });
+
+  it("caches a registered reason with its code", async () => {
+    const { tx, calls } = fakeTx();
+    await applyEvent(tx, log("ReasonRegistered", {
+      reasonId: 1n, code: "R001", name: "Fabricated Evidence", discoverer: "0x0000000000000000000000000000000000000000",
+    }, "reasonRegistry"), blockTimestamp);
+
+    expect(find(calls, "challengeReason", "upsert").args.create).toMatchObject({ id: 1, code: "R001", name: "Fabricated Evidence", registered: true });
+  });
+
+  it("refuses ChallengeCreated before its record is indexed", async () => {
     const emptyTx = new Proxy({}, { get: () => new Proxy({}, { get: () => async () => null }) }) as any;
     await expect(applyEvent(emptyTx, log("ChallengeCreated", {
-      recordId: 9n, cheatId: 1n, challenger: "0x3000000000000000000000000000000000000003", challengeId: 3n,
-      bond: 1n, special: false, evidenceHash: `0x${"a".repeat(64)}`, evidenceURI: "ipfs://x", commitEnd: 1n,
-    }), blockTimestamp)).rejects.toThrow(/RecordSubmitted 9/);
+      recordId: 9n, reasonId: 1n, challenger: "0x2000000000000000000000000000000000000002", challengeId: 1n,
+      bond: 1n, special: false, evidenceHash: `0x${"ab".repeat(32)}`, evidenceURI: "ipfs://x", commitEnd: 1n,
+    }), blockTimestamp)).rejects.toThrow(/RecordSubmitted \(record 9\)/);
   });
 });

@@ -1,7 +1,7 @@
 import { ok, queryObject, readJson, respond } from "@/lib/api";
-import { verifyRecordSignature } from "@/lib/auth";
-import { createRecord, listRecords } from "@/lib/services";
-import { createRecordSchema, listRecordsSchema } from "@/lib/validation";
+import { prepareSubmission } from "@/lib/chain";
+import { listRecords } from "@/lib/services";
+import { listRecordsSchema, submissionPlanSchema } from "@/lib/validation";
 
 export async function GET(request: Request) {
   return respond(async (requestId) => {
@@ -11,12 +11,13 @@ export async function GET(request: Request) {
   });
 }
 
+/**
+ * Returns an unsigned `submitRecord` transaction. The backend never signs or broadcasts:
+ * the player's wallet does, and the record only exists once RecordSubmitted is indexed.
+ */
 export async function POST(request: Request) {
   return respond(async (requestId) => {
-    const input = createRecordSchema.parse(await readJson(request));
-    await verifyRecordSignature(input);
-    const { signature: _signature, expiresAt: _expiresAt, ...data } = input;
-    const record = await createRecord(data);
-    return ok(record, { requestId, status: 201 });
+    const input = submissionPlanSchema.parse(await readJson(request));
+    return ok(await prepareSubmission(input), { requestId });
   });
 }
