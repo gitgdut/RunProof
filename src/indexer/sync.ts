@@ -71,25 +71,24 @@ async function reconcileChainState(client: ReturnType<typeof monadClient>, confi
           extended: challenge.extended, evidenceCount: challenge.evidenceCount, createdAt: date(challenge.createdAt), indexedAt: new Date(),
         },
       });
-      const round = await readRound(client, config, challengeId, challenge.round);
-      await prisma.challengeRound.upsert({
-        where: { challengeId_round: { challengeId, round: challenge.round } },
-        update: {
+      // Round 0 is settled silently when a challenge moves to evidence voting
+      // (only EvidenceVotingStarted is emitted), so reconcile every round up to the
+      // current one instead of just challenge.round.
+      for (const roundNumber of [...new Set([0, challenge.round])]) {
+        const round = await readRound(client, config, challengeId, roundNumber);
+        const data = {
           commitEnd: round.commitEnd > 0n ? date(round.commitEnd) : null, revealEnd: round.revealEnd > 0n ? date(round.revealEnd) : null,
           confirmPower: round.confirmPower, denyPower: round.denyPower, confirmStake: round.confirmStake.toString(),
           denyStake: round.denyStake.toString(), committedStake: round.committedStake.toString(), committedVoters: round.committedVoters,
           revealedVoters: round.revealedVoters, finalized: round.finalized, winner: choices[round.winner as keyof typeof choices] ?? null,
           winnerPower: round.winnerPower, rewardPool: round.rewardPool.toString(), slashBps: round.slashBps,
-        },
-        create: {
-          challengeId, round: challenge.round, commitEnd: round.commitEnd > 0n ? date(round.commitEnd) : null,
-          revealEnd: round.revealEnd > 0n ? date(round.revealEnd) : null, confirmPower: round.confirmPower, denyPower: round.denyPower,
-          confirmStake: round.confirmStake.toString(), denyStake: round.denyStake.toString(), committedStake: round.committedStake.toString(),
-          committedVoters: round.committedVoters, revealedVoters: round.revealedVoters, finalized: round.finalized,
-          winner: choices[round.winner as keyof typeof choices] ?? null, winnerPower: round.winnerPower,
-          rewardPool: round.rewardPool.toString(), slashBps: round.slashBps,
-        },
-      });
+        };
+        await prisma.challengeRound.upsert({
+          where: { challengeId_round: { challengeId, round: roundNumber } },
+          update: data,
+          create: { challengeId, round: roundNumber, ...data },
+        });
+      }
     } catch (error) {
       console.warn(JSON.stringify({ level: "warn", action: "reconcile_challenge", challengeId, message: error instanceof Error ? error.message : String(error) }));
     }
@@ -126,10 +125,31 @@ export async function syncOnce() {
   }
   let fromBlock = state ? state.lastBlock + 1n : config.startBlock;
   let processed = 0;
+  // The public Monad RPC rejects eth_getLogs ranges wider than a few hundred blocks,
+  // so shrink the window instead of failing the whole sync loop.
+  let batchSize = config.batchSize;
+  const minBatchSize = 10n;
 
   while (fromBlock <= targetBlock) {
-    const toBlock = fromBlock + config.batchSize - 1n > targetBlock ? targetBlock : fromBlock + config.batchSize - 1n;
-    const rawLogs = await client.getLogs({ address: config.addresses, events: indexedEvents, fromBlock, toBlock, strict: true });
+    const windowEnd = (size: bigint) => fromBlock + size - 1n > targetBlock ? targetBlock : fromBlock + size - 1n;
+    const fetchWindow = async (to: bigint) =>
+      client.getLogs({ address: config.addresses, events: indexedEvents, fromBlock, toBlock: to, strict: true });
+    let toBlock = windowEnd(batchSize);
+    let rawLogs: Awaited<ReturnType<typeof fetchWindow>> = [];
+    for (;;) {
+      try {
+        rawLogs = await fetchWindow(toBlock);
+        break;
+      } catch (error) {
+        if (batchSize <= minBatchSize) throw error;
+        batchSize = batchSize / 2n;
+        toBlock = windowEnd(batchSize);
+        console.warn(JSON.stringify({
+          level: "warn", action: "reduce_batch_size", batchSize: batchSize.toString(), fromBlock: fromBlock.toString(),
+          message: error instanceof Error ? error.message.split("\n")[0] : String(error),
+        }));
+      }
+    }
     const logs = rawLogs
       .filter((log) => log.eventName && log.args && log.transactionHash && log.blockNumber !== null && log.blockHash)
       .map((log) => ({

@@ -108,6 +108,16 @@ INDEXER_ONCE=true pnpm indexer
 pnpm indexer:verify
 ```
 
+不依赖数据库、只探测 RPC 与事件解码是否正常（会打印每个区间的解码结果）：
+
+```bash
+pnpm indexer:probe
+```
+
+> 公共测试网 RPC 对 `eth_getLogs` 的区块跨度有限制（`testnet-rpc.monad.xyz` 实测 100 区块可用、500 区块被拒），因此 `INDEXER_BATCH_SIZE` 默认 100；若某次查询仍被拒，索引器会自动把窗口折半（下限 10 区块）后重试，而不是让整个同步循环失败。
+
+已用 `pnpm indexer:probe` 在部署区块起 6000 个区块内实测：77 条事件全部按正式 ABI 正确解码（`RecordSubmitted` 4、`ChallengeCreated` 2、`VoteCommitted` 15、`VoteRevealed` 13、`VotingFinalized` 2、`VotingExtended` 1、`EvidenceVotingStarted` 1、`RecordVerified` 1、`RecordRevoked` 2、`RewardDistributed` 9、`StakeReturned` 12、`StakeSlashed` 4、`NFTMinted` 1、`Transfer` 1、`CheatRegistered` 5、`GameRegistered` 1、`ModeRegistered` 3）。实测也确认了两处易错点：`StakeReturned` 事件**没有** `challengeId` 字段；`VotingFinalized.outcome` 直接是 `ChallengeStatus`（3/4/5）。
+
 索引器的关键保证：
 
 - `(chainId, transactionHash, logIndex)` 唯一去重，原始日志先落 `chain_event_logs`，事件处理与派生表写入在同一个 `prisma.$transaction` 内完成，重复投递不会产生重复记录或重复奖励。

@@ -30,7 +30,7 @@ export function indexerConfig() {
     contracts,
     addresses: Object.values(contracts),
     startBlock: BigInt(integer("INDEXER_START_BLOCK", 0, 0)),
-    batchSize: BigInt(integer("INDEXER_BATCH_SIZE", 500, 1, 5000)),
+    batchSize: BigInt(integer("INDEXER_BATCH_SIZE", 100, 1, 5000)),
     confirmations: BigInt(integer("INDEXER_CONFIRMATIONS", 2, 1, 1000)),
     pollIntervalMs: integer("INDEXER_POLL_INTERVAL_MS", 5000, 250),
     reconcileLimit: integer("INDEXER_RECONCILE_LIMIT", 50, 0, 1000),
