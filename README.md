@@ -54,7 +54,7 @@ pnpm build
 pnpm start
 ```
 
-`pnpm test` 使用 Mock 数据源运行 11 个接口集成用例（健康检查、分页筛选、排行榜、投票汇总、签名写入、防重放、防伪造、作弊库权限）。
+`pnpm test` 使用 Mock 数据源运行 18 个用例：11 个接口集成测试（健康检查、分页筛选、排行榜、投票汇总、签名写入、防重放、防伪造、作弊库权限）+ 7 个事件处理器测试（`StakeReturned` 缺少 `challengeId`、`RewardDistributed` 类型映射、`VotingFinalized` 结果、`RecordVerified` 联动 NFT、事件顺序校验）。
 
 ## 合约对接
 
@@ -142,4 +142,4 @@ pnpm indexer:verify
 - `src/app/api/`：REST Route Handlers
 - `src/lib/`：统一响应、校验、签名、服务层、链上只读调用与演示数据
 - `src/indexer/`：ABI 事件筛选、配置、链上读取、事件处理、同步、校验
-- `src/test/`：API 集成测试
+- `src/test/`：接口集成测试与索引器事件处理器测试

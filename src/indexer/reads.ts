@@ -1,5 +1,5 @@
 import type { PublicClient } from "viem";
-import { cheatRegistryAbi, coreAbi } from "./abi";
+import { coreAbi } from "./abi";
 import type { indexerConfig } from "./config";
 
 type Config = ReturnType<typeof indexerConfig>;
@@ -96,17 +96,4 @@ export async function readRound(client: PublicClient, config: Config, challengeI
 export async function readVote(client: PublicClient, config: Config, challengeId: number, round: number, voter: string) {
   const value = await client.readContract({ address: config.contracts.core, abi: coreAbi, functionName: "votes", args: [BigInt(challengeId), round, voter as `0x${string}`] }) as readonly unknown[];
   return { commitment: String(value[0]), stake: BigInt(String(value[1])), choice: Number(value[2]), revealed: Boolean(value[3]), claimed: Boolean(value[4]) } satisfies ChainVote;
-}
-
-export async function readCheat(client: PublicClient, config: Config, cheatId: number) {
-  const value = await client.readContract({ address: config.contracts.cheatRegistry, abi: cheatRegistryAbi, functionName: "getCheat", args: [BigInt(cheatId)] }) as readonly unknown[];
-  return { code: String(value[0]), name: String(value[1]), evidenceURI: String(value[2]), discoverer: String(value[3]), createdAt: BigInt(String(value[4])), active: Boolean(value[5]) };
-}
-
-export async function readClaimable(client: PublicClient, config: Config, account: string) {
-  const [core, cheatRegistry] = await Promise.all([
-    client.readContract({ address: config.contracts.core, abi: coreAbi, functionName: "claimable", args: [account as `0x${string}`] }) as Promise<bigint>,
-    client.readContract({ address: config.contracts.cheatRegistry, abi: cheatRegistryAbi, functionName: "claimable", args: [account as `0x${string}`] }) as Promise<bigint>,
-  ]);
-  return { core, cheatRegistry };
 }

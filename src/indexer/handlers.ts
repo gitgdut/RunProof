@@ -22,11 +22,10 @@ const text = (value: unknown) => String(value);
 const wallet = (value: unknown) => text(value).toLowerCase();
 const amount = (value: unknown) => BigInt(String(value)).toString();
 const seconds = (value: unknown) => new Date(Number(String(value)) * 1000);
-const nullableRecordId = (value: unknown) => {
-  const parsed = id(value);
-  return parsed === 0 ? null : parsed;
-};
-const nullableChallengeId = (value: unknown) => {
+// Some events omit recordId / cheatId / challengeId entirely (e.g. StakeReturned only
+// carries recordId, cheatId and account), so missing and zero both mean "not applicable".
+const optionalId = (value: unknown) => {
+  if (value === undefined || value === null) return null;
   const parsed = id(value);
   return parsed === 0 ? null : parsed;
 };
@@ -167,7 +166,7 @@ export async function applyEvent(tx: Prisma.TransactionClient, log: IndexerLog, 
       const data = {
         recordId, cheatId, challenger: wallet(args.challenger), bond: amount(args.bond), reserved: "0",
         evidenceHash: text(args.evidenceHash), evidenceURI: text(args.evidenceURI), status: challengeStatus(1),
-        round: 0, special: Boolean(args.special), evidenceCount: 0, createdAt: blockTimestamp,
+        round: 0, special: Boolean(args.special), evidenceCount: 1, createdAt: blockTimestamp,
         transactionHash: log.transactionHash, logIndex: log.logIndex, blockNumber: log.blockNumber, indexedAt: blockTimestamp,
       };
       await tx.challenge.upsert({ where: { id: challengeId }, update: data, create: { id: challengeId, ...data } });
@@ -275,7 +274,7 @@ export async function applyEvent(tx: Prisma.TransactionClient, log: IndexerLog, 
       await ensureUser(tx, wallet(args.account));
       await tx.reward.create({
         data: {
-          recordId: nullableRecordId(args.recordId), cheatId: nullableRecordId(args.cheatId), challengeId: nullableChallengeId(args.challengeId),
+          recordId: optionalId(args.recordId), cheatId: optionalId(args.cheatId), challengeId: optionalId(args.challengeId),
           walletAddress: wallet(args.account), amount: amount(args.amount), rewardType: rewardKind(args.kind),
           transactionHash: log.transactionHash, logIndex: log.logIndex, blockNumber: log.blockNumber, createdAt: blockTimestamp,
         },
@@ -287,7 +286,7 @@ export async function applyEvent(tx: Prisma.TransactionClient, log: IndexerLog, 
       await ensureUser(tx, wallet(args.account));
       await tx.stakeFlow.create({
         data: {
-          recordId: nullableRecordId(args.recordId), cheatId: nullableRecordId(args.cheatId), challengeId: nullableChallengeId(args.challengeId),
+          recordId: optionalId(args.recordId), cheatId: optionalId(args.cheatId), challengeId: optionalId(args.challengeId),
           walletAddress: wallet(args.account), amount: amount(args.amount), flowType: log.eventName === "StakeReturned" ? "RETURNED" : "SLASHED",
           stakeKind: stakeKind(args.kind), transactionHash: log.transactionHash, logIndex: log.logIndex, blockNumber: log.blockNumber, createdAt: blockTimestamp,
         },
