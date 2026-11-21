@@ -1,0 +1,213 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RecordStatus {
+  PENDING
+  CHALLENGE_PERIOD
+  VERIFIED
+  REVOKED
+}
+
+enum CheatStatus {
+  ACTIVE
+  DEPRECATED
+}
+
+enum ChallengeStatus {
+  PENDING
+  VOTING
+  UPHELD
+  REJECTED
+  CANCELLED
+}
+
+enum VotingChoice {
+  YES
+  NO
+}
+
+enum VoteStatus {
+  COMMITTED
+  REVEALED
+  FINALIZED
+  SLASHED
+}
+
+enum RewardType {
+  RECORD_VERIFIED
+  CHALLENGE_SUCCESS
+  VOTE_REWARD
+  OTHER
+}
+
+enum NFTStatus {
+  PENDING
+  MINTED
+  TRANSFERRED
+  REVOKED
+}
+
+model User {
+  id            String   @id @default(cuid())
+  walletAddress String   @unique
+  createdAt     DateTime @default(now())
+  records       Record[]
+
+  @@map("users")
+}
+
+model Game {
+  id             String   @id
+  name           String
+  supportedModes Json
+  rulesVersion   String
+  records        Record[]
+  cheats         Cheat[]
+
+  @@map("games")
+}
+
+model Record {
+  id                String       @id @default(cuid())
+  chainRecordId     String?      @unique
+  playerAddress     String
+  gameId            String
+  gameMode          String
+  score             Int
+  stakeAmount       Decimal      @db.Decimal(78, 0)
+  videoUrl          String
+  replayUrl         String?
+  evidenceHash      String
+  status            RecordStatus @default(PENDING)
+  submittedAt       DateTime     @default(now())
+  challengeDeadline DateTime
+  transactionHash   String       @unique
+  player            User         @relation(fields: [playerAddress], references: [walletAddress], onDelete: Restrict)
+  game              Game         @relation(fields: [gameId], references: [id], onDelete: Restrict)
+  challenges        Challenge[]
+  rewards           Reward[]
+  nfts              NFT[]
+
+  @@unique([playerAddress, gameId, gameMode, evidenceHash])
+  @@index([gameId, gameMode, status, score])
+  @@index([playerAddress, submittedAt])
+  @@map("records")
+}
+
+model Cheat {
+  id           String      @id @default(cuid())
+  chainCheatId String?     @unique
+  cheatCode    String
+  name         String
+  description  String
+  gameId       String
+  status       CheatStatus @default(ACTIVE)
+  createdAt    DateTime    @default(now())
+  game         Game        @relation(fields: [gameId], references: [id], onDelete: Restrict)
+  challenges   Challenge[]
+
+  @@unique([gameId, cheatCode])
+  @@index([gameId, status])
+  @@map("cheats")
+}
+
+model Challenge {
+  id               String          @id @default(cuid())
+  chainChallengeId String?         @unique
+  recordId         String
+  cheatId          String
+  challenger       String
+  evidenceHash     String
+  status           ChallengeStatus @default(PENDING)
+  createdAt        DateTime        @default(now())
+  transactionHash  String          @unique
+  record           Record          @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  cheat            Cheat           @relation(fields: [cheatId], references: [id], onDelete: Restrict)
+  votes            Vote[]
+
+  @@unique([recordId, challenger, evidenceHash])
+  @@index([status, createdAt])
+  @@index([challenger, createdAt])
+  @@map("challenges")
+}
+
+model Vote {
+  id              String       @id @default(cuid())
+  challengeId     String
+  voterAddress    String
+  votingChoice    VotingChoice?
+  stakeAmount     Decimal      @db.Decimal(78, 0)
+  commitHash      String       @unique
+  transactionHash String
+  status          VoteStatus   @default(COMMITTED)
+  createdAt       DateTime     @default(now())
+  challenge       Challenge    @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@unique([challengeId, voterAddress])
+  @@index([voterAddress, createdAt])
+  @@map("votes")
+}
+
+model Reward {
+  id              String     @id @default(cuid())
+  chainRewardId   String?    @unique
+  walletAddress   String
+  amount          Decimal    @db.Decimal(78, 0)
+  rewardType      RewardType
+  relatedRecordId String?
+  transactionHash String
+  createdAt       DateTime   @default(now())
+  record          Record?    @relation(fields: [relatedRecordId], references: [id], onDelete: SetNull)
+
+  @@unique([transactionHash, walletAddress, rewardType])
+  @@index([walletAddress, createdAt])
+  @@map("rewards")
+}
+
+model NFT {
+  id              String    @id @default(cuid())
+  recordId        String
+  tokenId         String    @unique
+  ownerAddress    String
+  status          NFTStatus @default(PENDING)
+  transactionHash String
+  createdAt       DateTime  @default(now())
+  record          Record    @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@index([ownerAddress, status])
+  @@map("nfts")
+}
+
+model ChainEventLog {
+  id              String   @id @default(cuid())
+  chainId         Int
+  contractAddress String
+  eventName       String
+  transactionHash String
+  logIndex        Int
+  blockNumber     BigInt
+  blockHash       String
+  payload         Json
+  processedAt     DateTime @default(now())
+
+  @@unique([chainId, transactionHash, logIndex])
+  @@index([contractAddress, blockNumber])
+  @@map("chain_event_logs")
+}
+
+model SyncState {
+  id              String   @id
+  chainId         Int
+  contractAddress String
+  lastBlock       BigInt   @default(0)
+  updatedAt       DateTime @updatedAt
+
+  @@unique([chainId, contractAddress])
+  @@map("sync_states")
+}
