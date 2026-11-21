@@ -8,9 +8,19 @@
 - Chain ID：`10143`
 - RPC：`https://testnet-rpc.monad.xyz`
 - 原生资产：MON
-- V2：**尚未部署**，不得把 V1 地址与 V2 ABI 混用
+- V2：已使用演示周期部署，不得把 V1 地址与 V2 ABI 混用
 - V1 历史地址：仅保存在 `deployments/monad-testnet-v1.json`
-- V2 部署后地址：写入 `deployments/monad-testnet-v2.json`
+- 部署起始区块：`81509823`
+
+| 合约 | V2 地址 |
+|---|---|
+| CategoryRegistry | `0x8D3aEdd92fA2151F61877D0e844a556E4eAB91A7` |
+| ChallengeReasonRegistry | `0x522d2883FA6ac437F414874B9B7cEEAfAE4caC0b` |
+| RunProofCore | `0x1eb96bf618151adA2F7174CE9b8c41F45486084F` |
+| RecordNFT | `0x967D0B53cb05BC9D6c85BEB087444e6f5a3e1360` |
+
+当前部署使用演示周期：挑战窗口 10 分钟，Commit、Reveal、延期各 2 分钟。
+四个合约的链上代码已经确认存在；源码验证尚未完成，因此索引器初始化暂缓。
 
 ## 数据约定
 

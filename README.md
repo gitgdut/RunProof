@@ -78,11 +78,12 @@ forge script script/Deploy.s.sol --rpc-url "$MONAD_RPC_URL" --private-key "$PRIV
 `DEMO_PERIODS=1` uses a 10-minute challenge window and 2-minute commit/reveal/extension periods.
 Without it, defaults are 30 days / 3 days / 1 day / 2 days.
 
-V2 has not been deployed yet. Record its addresses in `deployments/monad-testnet-v2.json` after
-deployment. The previous game-specific deployment is preserved in
-`deployments/monad-testnet-v1.json` and must not be used with the V2 ABI.
+V2 was deployed to Monad Testnet with demo periods on 2026-11-21. Its addresses and deployment
+transactions are in `deployments/monad-testnet-v2.json`. The previous game-specific deployment is
+preserved in `deployments/monad-testnet-v1.json` and must not be used with the V2 ABI.
 
-After deployment, verify all four contracts on a Monad explorer before initializing the indexer.
+Source verification is pending explicit approval to upload the public sources and compiler metadata
+to the multi-explorer verification service. Verification must finish before initializing the indexer.
 
 ## Demo scripts
 
